@@ -31,7 +31,7 @@ jobs:
           FIRST_RUN: ${{ github.event_name == 'schedule' && github.run_number == 1 }}
         run: |
           set -euo pipefail
-          set +u  # associative array এর জন্য
+          set +u
 
           GH_PAGES_URL="https://raw.githubusercontent.com/buzzinguaecn/Pizza/gh-pages/LiveEventSports.m3u"
           TARGET_REPO="buzzinguaecn/Pizza"
@@ -41,7 +41,7 @@ jobs:
           mkdir -p "$WORK_DIR"
           cd "$WORK_DIR"
 
-          # সোর্স প্লেলিস্ট (URL এবং গ্রুপ টাইটেল) - axsports এর গ্রুপ আলাদা
+          # সোর্স প্লেলিস্ট (URL এবং গ্রুপ টাইটেল)
           declare -a SOURCE_URLS=(
             "https://raw.githubusercontent.com/srhady/tapmad-bd/refs/heads/main/tapmad_bd.m3u"
             "https://raw.githubusercontent.com/srhady/bingstream/refs/heads/main/playlist.m3u"
@@ -57,7 +57,7 @@ jobs:
             "SAWARID سواريد - Fancode"
           )
 
-          # ম্যাপিং সোর্স প্লেলিস্ট (শুধু URL)
+          # ম্যাপিং সোর্স প্লেলিস্ট
           declare -a MAPPING_URLS=(
             "https://raw.githubusercontent.com/buzzinguaecn/Pizza/main/Pakistan-All-Urdu-All-Farsi.m3u"
             "https://raw.githubusercontent.com/buzzinguaecn/Pizza/main/All-TV.m3u"
@@ -77,160 +77,150 @@ jobs:
           CHANNEL_MAP["SATV"]="SA TV"
           CHANNEL_MAP["GTV"]="Gazi TV"
 
-          # ফাংশন: ডাউনলোড
-          download_file() { curl -fsSL --max-time 30 -o "$2" "$1" || { echo "❌ ডাউনলোড ব্যর্থ: $1" >&2; return 1; }; }
+          download_file() { curl -fsSL --max-time 30 -o "$2" "$1" || { echo "❌ ব্যর্থ: $1" >&2; return 1; }; }
 
-          # ফাংশন: প্লেলিস্ট থেকে ব্লকগুলো আলাদা করা (প্রতিটি ব্লক = EXTINF থেকে পরবর্তী EXTINF বা EOF পর্যন্ত সব লাইন)
-          # আউটপুট: প্রতিটি ব্লক একটি টেম্প ফাইলে, এবং ফাইলের পাথ stdout এ
-          split_into_blocks() {
+          # প্লেলিস্টকে ব্লকে ভাগ করা (প্রতি ব্লক = #EXTINF থেকে পরবর্তী #EXTINF পর্যন্ত সব লাইন)
+          split_blocks() {
             local input="$1"
             local prefix="$2"
             local block_num=0
             local block_file=""
-            local inside_block=0
+            local in_block=0
             while IFS= read -r line; do
               if [[ "$line" == \#EXTINF* ]]; then
-                if [ $inside_block -eq 1 ]; then
-                  # আগের ব্লক শেষ
+                if [ $in_block -eq 1 ]; then
                   echo "$block_file"
                 fi
                 block_num=$((block_num+1))
                 block_file="$WORK_DIR/${prefix}_block_${block_num}.txt"
                 > "$block_file"
-                inside_block=1
+                in_block=1
               fi
-              if [ $inside_block -eq 1 ]; then
+              if [ $in_block -eq 1 ]; then
                 echo "$line" >> "$block_file"
               fi
             done < "$input"
-            if [ $inside_block -eq 1 ]; then
+            if [ $in_block -eq 1 ]; then
               echo "$block_file"
             fi
           }
 
-          # ফাংশন: ব্লকের মধ্যে group-title প্রতিস্থাপন
-          set_group_title_in_block() {
-            local block_file="$1"
-            local new_group="$2"
-            local temp_file="${block_file}.tmp"
-            sed -E 's/group-title="[^"]*"/group-title="'"$new_group"'"/' "$block_file" > "$temp_file"
-            mv "$temp_file" "$block_file"
+          # ব্লকের group-title পরিবর্তন
+          fix_group_title() {
+            local blk="$1"
+            local new_grp="$2"
+            sed -i -E 's/group-title="[^"]*"/group-title="'"$new_grp"'"/' "$blk"
           }
 
-          # ফাংশন: ব্লকে ফুটবল বা ক্রিকেট কীওয়ার্ড আছে কিনা (EXTINF + URL + অন্যান্য লাইন)
-          is_football_or_cricket() {
-            local block_file="$1"
-            grep -qiE '(football|soccer|ফুটবল|cricket|ক্রিকেট)' "$block_file" && return 0 || return 1
+          # ব্লকে ফুটবল/ক্রিকেট আছে কিনা
+          is_football_cricket() {
+            grep -qiE '(football|soccer|ফুটবল|cricket|ক্রিকেট)' "$1"
           }
 
-          # ফাংশন: সোর্স প্লেলিস্ট প্রক্রিয়া (ব্লক ফাইলের তালিকা আউটপুট)
-          process_source() {
+          # একটি সোর্স প্লেলিস্ট প্রক্রিয়া করে আউটপুট তৈরি
+          process_one_source() {
             local url="$1"
-            local group="$2"
-            local source_dir="$WORK_DIR/source_$RANDOM"
-            mkdir -p "$source_dir"
-            local playlist="$source_dir/playlist.m3u"
-            download_file "$url" "$playlist" || return 1
-            # ব্লক ফাইল তৈরি
-            local blocks_file="$source_dir/blocks.lst"
-            split_into_blocks "$playlist" "$group" > "$blocks_file"
-            # প্রতিটি ব্লকে group-title পরিবর্তন
+            local grp="$2"
+            local tmp_dir="$WORK_DIR/tmp_$$_$RANDOM"
+            mkdir -p "$tmp_dir"
+            local playlist="$tmp_dir/playlist.m3u"
+            download_file "$url" "$playlist" || { rm -rf "$tmp_dir"; return 1; }
+            local blocks_file="$tmp_dir/blocks.lst"
+            split_blocks "$playlist" "$grp" > "$blocks_file"
+            if [ ! -s "$blocks_file" ]; then
+              rm -rf "$tmp_dir"
+              return 1
+            fi
+            # group-title ঠিক করা
             while IFS= read -r blk; do
-              set_group_title_in_block "$blk" "$group"
+              fix_group_title "$blk" "$grp"
             done < "$blocks_file"
-            # ফুটবল/ক্রিকেট বনাম অন্য ব্লক আলাদা
-            local football_blocks=()
-            local other_blocks=()
+            # ফুটবল/ক্রিকেট আলাদা
+            local football=()
+            local other=()
             while IFS= read -r blk; do
-              if is_football_or_cricket "$blk"; then
-                football_blocks+=("$blk")
+              if is_football_cricket "$blk"; then
+                football+=("$blk")
               else
-                other_blocks+=("$blk")
+                other+=("$blk")
               fi
             done < "$blocks_file"
-            # প্রথমে ফুটবল/ক্রিকেট, তারপর অন্যান্য
-            for blk in "${football_blocks[@]}"; do
-              cat "$blk" >> "$source_dir/merged.txt"
-              echo "" >> "$source_dir/merged.txt"
+            # আউটপুট ফাইল
+            local out_file="$tmp_dir/out.txt"
+            > "$out_file"
+            for blk in "${football[@]}"; do
+              cat "$blk" >> "$out_file"
+              echo "" >> "$out_file"
             done
-            for blk in "${other_blocks[@]}"; do
-              cat "$blk" >> "$source_dir/merged.txt"
-              echo "" >> "$source_dir/merged.txt"
+            for blk in "${other[@]}"; do
+              cat "$blk" >> "$out_file"
+              echo "" >> "$out_file"
             done
-            cat "$source_dir/merged.txt"
+            cat "$out_file"
+            rm -rf "$tmp_dir"
           }
 
           # ------------------------------------------------------------
-          # 1. gh-pages থেকে হেডার ও চ্যানেল ব্লক সংগ্রহ
+          # 1. gh-pages প্লেলিস্ট ডাউনলোড ও প্রক্রিয়া
           # ------------------------------------------------------------
-          echo "📥 gh-pages প্লেলিস্ট ডাউনলোড..."
+          echo "📥 gh-pages ডাউনলোড..."
           download_file "$GH_PAGES_URL" "gh_pages.m3u" || exit 1
           awk '/^#EXTINF/{exit} {print}' "gh_pages.m3u" > "header.txt"
-          # gh-pages চ্যানেল ব্লক (ম্যাপিংয়ের জন্য)
-          declare -a GH_BLOCKS=()
+          
+          GH_BLOCKS=()
           while IFS= read -r blk; do
             GH_BLOCKS+=("$blk")
-          done < <(split_into_blocks "gh_pages.m3u" "gh")
-          # ব্লকের মধ্যে থেকে EXTINF ও URLs বের করার ফাংশন (ম্যাপিংয়ের জন্য শুধু লিংক দরকার)
-          extract_links_from_block() {
-            local blk="$1"
-            grep -E '^https?://' "$blk" || true
-          }
-          extract_extinf_from_block() {
-            head -n1 "$blk"
-          }
-          # gh ব্লকের EXTINF ও URLs অ্যারেতে রাখি
+          done < <(split_blocks "gh_pages.m3u" "gh")
+          
           GH_EXTINF=()
           GH_URLS=()
           for blk in "${GH_BLOCKS[@]}"; do
-            extinf=$(extract_extinf_from_block "$blk")
-            urls=$(extract_links_from_block "$blk" | tr '\n' '|')
+            extinf=$(head -n1 "$blk")
+            urls=$(grep -E '^https?://' "$blk" | tr '\n' '|')
             GH_EXTINF+=("$extinf")
             GH_URLS+=("$urls")
           done
 
           # ------------------------------------------------------------
-          # 2. সোর্স প্লেলিস্ট প্রক্রিয়া করে আউটপুট তৈরি
+          # 2. সোর্স প্লেলিস্ট প্রক্রিয়া করে আউটপুট তৈরি
           # ------------------------------------------------------------
           SOURCE_OUTPUT="source_output.txt"
           > "$SOURCE_OUTPUT"
+          
           for idx in "${!SOURCE_URLS[@]}"; do
             url="${SOURCE_URLS[$idx]}"
-            group="${SOURCE_GROUPS[$idx]}"
-            echo "🟢 প্রসেসিং সোর্স $((idx+1)): $group"
-            # সোর্স প্রক্রিয়া
-            tmp_out="$WORK_DIR/source_$idx.out"
-            if process_source "$url" "$group" > "$tmp_out"; then
-              # সেপারেটর লাইন
+            grp="${SOURCE_GROUPS[$idx]}"
+            echo "🟢 প্রসেসিং সোর্স $((idx+1)): $grp"
+            if process_one_source "$url" "$grp" > "tmp_source_$idx.out" 2>/dev/null; then
               echo "# 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴" >> "$SOURCE_OUTPUT"
               echo "" >> "$SOURCE_OUTPUT"
-              echo "# 🟢 $group 🟢" >> "$SOURCE_OUTPUT"
+              echo "# 🟢 $grp 🟢" >> "$SOURCE_OUTPUT"
               echo "" >> "$SOURCE_OUTPUT"
-              cat "$tmp_out" >> "$SOURCE_OUTPUT"
+              cat "tmp_source_$idx.out" >> "$SOURCE_OUTPUT"
               echo "" >> "$SOURCE_OUTPUT"
-              echo "# 🆕 $group 👉 Updateded ✅" >> "$SOURCE_OUTPUT"
+              echo "# 🆕 $grp 👉 Updateded ✅" >> "$SOURCE_OUTPUT"
               echo "" >> "$SOURCE_OUTPUT"
               echo "" >> "$SOURCE_OUTPUT"
             else
-              # কোনো চ্যানেল পাওয়া যায়নি
               echo "# 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴" >> "$SOURCE_OUTPUT"
               echo "" >> "$SOURCE_OUTPUT"
-              echo "# 🟢 $group 🟢" >> "$SOURCE_OUTPUT"
+              echo "# 🟢 $grp 🟢" >> "$SOURCE_OUTPUT"
               echo "" >> "$SOURCE_OUTPUT"
               echo "# 🟤🟤🟤🟤🟤🟤🟤🟤🟤🟤 🟤NOT FOUND ANY CHANNELS🟤🟤🟤🟤🟤🟤🟤🟤🟤🟤 🟤" >> "$SOURCE_OUTPUT"
               echo "" >> "$SOURCE_OUTPUT"
-              echo "# 🆕 $group 👉 Updateded ✅" >> "$SOURCE_OUTPUT"
+              echo "# 🆕 $grp 👉 Updateded ✅" >> "$SOURCE_OUTPUT"
               echo "" >> "$SOURCE_OUTPUT"
               echo "" >> "$SOURCE_OUTPUT"
             fi
           done
 
           # ------------------------------------------------------------
-          # 3. ম্যাপিং সোর্স থেকে ম্যাপিং লিংক সংগ্রহ (পূর্বের মতো)
+          # 3. ম্যাপিং ও লোকাল চ্যানেল আপডেট
           # ------------------------------------------------------------
           LOCAL_OUTPUT="local_output.txt"
           > "$LOCAL_OUTPUT"
           TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S")
+          
           MAPPING_FILE="$WORK_DIR/mapping_merged.m3u"
           > "$MAPPING_FILE"
           for map_url in "${MAPPING_URLS[@]}"; do
@@ -238,8 +228,8 @@ jobs:
             tmp_map="$WORK_DIR/map_$$.m3u"
             download_file "$map_url" "$tmp_map" && cat "$tmp_map" >> "$MAPPING_FILE"
           done
+          
           declare -A MAPPING_CHANNELS
-          # ম্যাপিং ফাইল থেকে ব্লক তৈরি করে সেখান থেকে নাম ও লিংক বের করি
           while IFS= read -r blk; do
             extinf=$(head -n1 "$blk")
             ch_name=$(echo "$extinf" | sed -n 's/.*,\(.*\)$/\1/p' | tr '[:upper:]' '[:lower:]')
@@ -250,8 +240,8 @@ jobs:
             else
               MAPPING_CHANNELS[$ch_name]="$urls"
             fi
-          done < <(split_into_blocks "$MAPPING_FILE" "map")
-          # gh-pages চ্যানেলের জন্য ম্যাপিং
+          done < <(split_blocks "$MAPPING_FILE" "map")
+          
           for i in "${!GH_EXTINF[@]}"; do
             extinf="${GH_EXTINF[$i]}"
             old_urls_str="${GH_URLS[$i]}"
@@ -279,43 +269,30 @@ jobs:
                 done
               done
             fi
-            final_new_links=()
-            skipped_links=()
+            final_new=()
+            skipped=()
             for link in "${new_links[@]}"; do
-              duplicate=0
+              dup=0
               for old in "${old_urls[@]}"; do
-                if [[ "$link" == "$old" ]]; then
-                  duplicate=1
-                  break
-                fi
+                [[ "$link" == "$old" ]] && { dup=1; break; }
               done
-              if [ $duplicate -eq 1 ]; then
-                skipped_links+=("$link")
+              if [ $dup -eq 1 ]; then
+                skipped+=("$link")
               else
-                final_new_links+=("$link")
+                final_new+=("$link")
               fi
             done
-            if [ ${#final_new_links[@]} -eq 0 ] && [ ${#skipped_links[@]} -gt 0 ]; then
+            if [ ${#final_new[@]} -eq 0 ] && [ ${#skipped[@]} -gt 0 ]; then
               echo "#AUTO-UPDATED - $channel_name_full ⛔ SKIPPED ⛔ - $TIMESTAMP 🟡 - 🔄 - 🔴" >> "$LOCAL_OUTPUT"
-              for skip in "${skipped_links[@]}"; do
-                echo "#🔴 Duplicate Link Found 🔴 $skip" >> "$LOCAL_OUTPUT"
-              done
-            elif [ ${#final_new_links[@]} -gt 0 ]; then
+              for s in "${skipped[@]}"; do echo "#🔴 Duplicate Link Found 🔴 $s" >> "$LOCAL_OUTPUT"; done
+            elif [ ${#final_new[@]} -gt 0 ]; then
               echo "#AUTO-UPDATED - $channel_name_full ✅- $TIMESTAMP 🟡 - 🔄 - 🔴" >> "$LOCAL_OUTPUT"
-              for link in "${final_new_links[@]}"; do
-                echo "$link" >> "$LOCAL_OUTPUT"
-              done
-              for old in "${old_urls[@]}"; do
-                echo "$old" >> "$LOCAL_OUTPUT"
-              done
-              for skip in "${skipped_links[@]}"; do
-                echo "#🔴 Duplicate Link Found 🔴 $skip" >> "$LOCAL_OUTPUT"
-              done
+              for ln in "${final_new[@]}"; do echo "$ln" >> "$LOCAL_OUTPUT"; done
+              for old in "${old_urls[@]}"; do echo "$old" >> "$LOCAL_OUTPUT"; done
+              for s in "${skipped[@]}"; do echo "#🔴 Duplicate Link Found 🔴 $s" >> "$LOCAL_OUTPUT"; done
             else
               echo "$extinf" >> "$LOCAL_OUTPUT"
-              for old in "${old_urls[@]}"; do
-                echo "$old" >> "$LOCAL_OUTPUT"
-              done
+              for old in "${old_urls[@]}"; do echo "$old" >> "$LOCAL_OUTPUT"; done
             fi
             echo "" >> "$LOCAL_OUTPUT"
             echo "" >> "$LOCAL_OUTPUT"
@@ -345,6 +322,7 @@ jobs:
           cp "$FINAL_PLAYLIST" "$TARGET_FILE"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             COMMIT_MSG="🆗 Live Event Sports : 🆕 Start Done ✅ - $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           elif [ "$FIRST_RUN" == "true" ]; then
@@ -352,11 +330,12 @@ jobs:
           else
             COMMIT_MSG="🆗 Live Event Sports : 🔄 Updated Done ✅ - $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           fi
+          
           git add "$TARGET_FILE"
           if ! git diff --staged --quiet; then
             git commit -m "$COMMIT_MSG"
             git push origin "$TARGET_BRANCH"
             echo "✅ সফলভাবে পুশ করা হয়েছে"
           else
-            echo "ℹ️ কোনো পরিবর্তন নেই"
+            echo "ℹ️ কোনো পরিবর্তন নেই, পুশের প্রয়োজন নেই"
           fi
