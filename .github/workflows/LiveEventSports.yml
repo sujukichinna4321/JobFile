@@ -2,12 +2,7 @@ name: Auto Update IPTV Playlist
 on:
   schedule:
     - cron: '*/5 * * * *' # প্রতি ৫ মিনিট পর পর স্বয়ংক্রিয়ভাবে চলবে
-  workflow_dispatch:
-    inputs:
-      first_run:
-        description: 'Is this the first run? (true/false)'
-        required: false
-        default: 'false'
+  workflow_dispatch: # কোনো ইনপুট ছাড়াই সরাসরি ম্যানুয়াল রান করার জন্য
 
 jobs:
   update-playlist:
@@ -293,8 +288,6 @@ jobs:
           python update_playlist.py
 
       - name: Commit and Push Changes
-        env:
-          FIRST_RUN: ${{ github.event.inputs.first_run }}
         run: |
           cd pizza-repo
           git config --global user.name "github-actions[bot]"
@@ -306,11 +299,11 @@ jobs:
             # Get current Bangladesh time (BST / UTC+6)
             CURRENT_TIME=$(date -u -d "+6 hours" +"%Y-%m-%d %H:%M:%S")
             
-            if [ "$FIRST_RUN" = "true" ]; then
-              COMMIT_MESSAGE="🆗 Live Event Sports : 🆕 Start 🆕 - $CURRENT_TIME 🟡"
-            elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              # Manual Trigger Message
               COMMIT_MESSAGE="🆗 Live Event Sports : 🆕 Start Done ✅ - $CURRENT_TIME 🟡"
             else
+              # Scheduled Trigger Message
               COMMIT_MESSAGE="🆗 Live Event Sports : 🔄 Updated Done ✅ - $CURRENT_TIME 🟡"
             fi
             
