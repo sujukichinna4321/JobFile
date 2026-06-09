@@ -1,319 +1,320 @@
-name: Update LiveEventSports Playlist
-
+name: Auto Update IPTV Playlist
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '*/5 * * * *' # প্রতি ৫ মিনিট পর পর স্বয়ংক্রিয়ভাবে চলবে
   workflow_dispatch:
+    inputs:
+      first_run:
+        description: 'Is this the first run? (true/false)'
+        required: false
+        default: 'false'
 
 jobs:
-  update:
+  update-playlist:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
     steps:
-      - name: Checkout second account repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.PAT_TOKEN }}
-          repository: sujukichinna4321/JobFile
-          path: jobfile
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.x'
 
-      - name: Install dependencies
-        run: pip install requests
+      - name: Install Dependencies
+        run: |
+          pip install requests
 
-      - name: Update playlist
+      - name: Run Update Script
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
-          FIRST_RUN: ${{ github.event_name == 'schedule' && github.run_number == 1 }}
-        run: python3 - << 'EOF'
-import os
-import re
-import requests
-import sys
-from datetime import datetime
-from collections import OrderedDict
+        run: |
+          cat << 'EOF' > update_playlist.py
+          import os
+          import re
+          import requests
+          from datetime import datetime, timedelta, timezone
 
-# ------------------------------------------------------------
-# কনফিগারেশন
-# ------------------------------------------------------------
-GH_PAGES_URL = "https://raw.githubusercontent.com/buzzinguaecn/Pizza/gh-pages/LiveEventSports.m3u"
-TARGET_REPO = "buzzinguaecn/Pizza"
-TARGET_BRANCH = "main"
-TARGET_FILE = "LiveEventSports.m3u"
+          # Configurations
+          SOURCE_PLAYLISTS = [
+              {"url": "https://raw.githubusercontent.com/srhady/tapmad-bd/refs/heads/main/tapmad_bd.m3u", "title": "SAWARID سواريد - Tampad"},
+              {"url": "https://raw.githubusercontent.com/srhady/bingstream/refs/heads/main/playlist.m3u", "title": "SAWARID سواريد - BingStream"},
+              {"url": "https://raw.githubusercontent.com/srhady/SonyLiv/refs/heads/main/sonyliv_playlist.m3u", "title": "SAWARID سواريد - SonyLiv"},
+              {"url": "https://raw.githubusercontent.com/srhady/axsports/main/playlist.m3u", "title": "SAWARID سواريد - Axsports"},
+              {"url": "https://raw.githubusercontent.com/srhady/Fancode-bd/main/main_playlist.m3u", "title": "SAWARID سواريد - Fancode"}
+          ]
 
-SOURCE_URLS = [
-    "https://raw.githubusercontent.com/srhady/tapmad-bd/refs/heads/main/tapmad_bd.m3u",
-    "https://raw.githubusercontent.com/srhady/bingstream/refs/heads/main/playlist.m3u",
-    "https://raw.githubusercontent.com/srhady/SonyLiv/refs/heads/main/sonyliv_playlist.m3u",
-    "https://raw.githubusercontent.com/srhady/axsports/main/playlist.m3u",
-    "https://raw.githubusercontent.com/srhady/Fancode-bd/main/main_playlist.m3u",
-]
-SOURCE_GROUPS = [
-    "SAWARID سواريد - Tampad",
-    "SAWARID سواريد - BingStream",
-    "SAWARID سواريد - SonyLiv",
-    "SAWARID سواريد - Axsports",
-    "SAWARID سواريد - Fancode",
-]
+          MAPPING_PLAYLISTS = [
+              "https://raw.githubusercontent.com/buzzinguaecn/Pizza/main/Pakistan-All-Urdu-All-Farsi.m3u",
+              "https://raw.githubusercontent.com/buzzinguaecn/Pizza/main/All-TV.m3u"
+          ]
 
-MAPPING_URLS = [
-    "https://raw.githubusercontent.com/buzzinguaecn/Pizza/main/Pakistan-All-Urdu-All-Farsi.m3u",
-    "https://raw.githubusercontent.com/buzzinguaecn/Pizza/main/All-TV.m3u",
-]
+          LOCAL_SOURCE_URL = "https://raw.githubusercontent.com/buzzinguaecn/Pizza/gh-pages/LiveEventSports.m3u"
 
-CHANNEL_MAP = {
-    "BTV National": ["BTV NATIONAL HD", "BTV World", "BTV"],
-    "BTV CTG": ["BTV CTG"],
-    "Somoy TV": ["Somoy News TV", "Somoy TV"],
-    "Jamuna TV": ["Jamuna TV", "JAMUNA TV", "Jamuna"],
-    "Ekushey TV": ["Ekushey TV"],
-    "NTV BD": ["NTV"],
-    "NTV-Europe": ["NTV Europe"],
-    "Channel 24": ["Channel 24"],
-    "Deen TV": ["Deen TV"],
-    "SATV": ["SA TV"],
-    "GTV": ["Gazi TV"],
-}
+          CHANNEL_MAPPING = {
+              "BTV National": ["BTV NATIONAL HD", "BTV World"],
+              "BTV CTG": ["BTV CTG"],
+              "Somoy TV": ["Somoy News TV", "Somoy TV"],
+              "Jamuna TV": ["Jamuna TV", "JAMUNA TV", "Jamuna"],
+              "Ekushey TV": ["Ekushey TV"],
+              "NTV BD": ["NTV"],
+              "NTV-Europe": ["NTV Europe"],
+              "Channel 24": ["Channel 24"],
+              "Deen TV": ["Deen TV"],
+              "SATV": ["SA TV"],
+              "GTV": ["Gazi TV"],
+          }
 
-# ------------------------------------------------------------
-# ইউটিলিটি ফাংশন
-# ------------------------------------------------------------
-def download(url):
-    try:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        return r.text
-    except Exception as e:
-        print(f"❌ ডাউনলোড ব্যর্থ {url}: {e}", file=sys.stderr)
-        return None
+          def parse_blocks(content):
+              blocks = []
+              lines = content.split('\n')
+              current_block = []
+              for line in lines:
+                  if line.strip().startswith('#EXTINF:'):
+                      if current_block:
+                          blocks.append(current_block)
+                      current_block = [line]
+                  elif current_block:
+                      current_block.append(line)
+              if current_block:
+                  blocks.append(current_block)
+              return blocks
 
-def split_blocks(content):
-    """প্লেলিস্টকে ব্লকে ভাগ করে (প্রতি ব্লক: EXTINF থেকে পরবর্তী EXTINF বা EOF পর্যন্ত সব লাইন)"""
-    lines = content.splitlines()
-    blocks = []
-    current_block = []
-    for line in lines:
-        if line.startswith("#EXTINF"):
-            if current_block:
-                blocks.append("\n".join(current_block))
-                current_block = []
-        current_block.append(line)
-    if current_block:
-        blocks.append("\n".join(current_block))
-    return blocks
+          def get_block_info(block):
+              extinf_line = block[0]
+              group = ""
+              group_match = re.search(r'group-title="([^"]+)"', extinf_line)
+              if group_match:
+                  group = group_match.group(1)
+              
+              name = ""
+              comma_idx = extinf_line.rfind(',')
+              if comma_idx != -1:
+                  name = extinf_line[comma_idx+1:].strip()
+              
+              urls = []
+              for line in block[1:]:
+                  line_strip = line.strip()
+                  if not line_strip:
+                      continue
+                  if line_strip.startswith('#'):
+                      potential_url = line_strip.lstrip('#').strip()
+                      if potential_url.startswith('http://') or potential_url.startswith('https://'):
+                          urls.append(line_strip)
+                  elif line_strip.startswith('http://') or line_strip.startswith('https://'):
+                      urls.append(line_strip)
+              return {'extinf': extinf_line, 'group': group, 'name': name, 'urls': urls}
 
-def fix_group_title(block, new_group):
-    """ব্লকের প্রথম লাইনে group-title পরিবর্তন করে"""
-    lines = block.splitlines()
-    if lines:
-        lines[0] = re.sub(r'group-title="[^"]*"', f'group-title="{new_group}"', lines[0])
-    return "\n".join(lines)
+          def process_source_playlist(url, new_title):
+              try:
+                  r = requests.get(url, timeout=15)
+                  if r.status_code != 200:
+                      return None
+                  content = r.text
+              except Exception:
+                  return None
+              
+              blocks = parse_blocks(content)
+              if not blocks:
+                  return []
+              
+              processed_blocks = []
+              for b in blocks:
+                  info = get_block_info(b)
+                  extinf = info['extinf']
+                  if 'group-title="' in extinf:
+                      extinf = re.sub(r'group-title="[^"]*"', f'group-title="{new_title}"', extinf)
+                  else:
+                      comma_idx = extinf.rfind(',')
+                      if comma_idx != -1:
+                          extinf = extinf[:comma_idx] + f' group-title="{new_title}"' + extinf[comma_idx:]
+                  
+                  new_lines = [extinf] + b[1:]
+                  search_text = (info['group'] + " " + info['name'] + " " + extinf).lower()
+                  is_sport = "football" in search_text or "cricket" in search_text
+                  
+                  processed_blocks.append({
+                      'is_sport': is_sport,
+                      'lines': new_lines
+                  })
+              
+              processed_blocks.sort(key=lambda x: x['is_sport'], reverse=True)
+              return [pb['lines'] for pb in processed_blocks]
 
-def is_football_cricket(block):
-    """ব্লকে ফুটবল/ক্রিকেট কীওয়ার্ড আছে কিনা"""
-    return bool(re.search(r'(football|soccer|ফুটবল|cricket|ক্রিকেট)', block, re.IGNORECASE))
+          # Setup local and destination repository
+          pat_token = os.getenv("PAT_TOKEN")
+          os.system(f"git clone https://x-access-token:{pat_token}@github.com/buzzinguaecn/Pizza.git pizza-repo")
 
-def process_source(url, group):
-    """একটি সোর্স প্লেলিস্ট প্রক্রিয়া করে আউটপুট ব্লকগুলোর তালিকা ফেরত দেয়"""
-    content = download(url)
-    if not content:
-        return None
-    blocks = split_blocks(content)
-    if not blocks:
-        return None
-    # group-title ঠিক করা
-    fixed_blocks = [fix_group_title(blk, group) for blk in blocks]
-    # ফুটবল/ক্রিকেট আলাদা
-    football = [blk for blk in fixed_blocks if is_football_cricket(blk)]
-    others = [blk for blk in fixed_blocks if not is_football_cricket(blk)]
-    return football + others   # প্রথমে ফুটবল/ক্রিকেট
+          # 1. Parse Mapping Source Playlists
+          mapped_channels_data = {}
+          for url in MAPPING_PLAYLISTS:
+              try:
+                  r = requests.get(url, timeout=15)
+                  if r.status_code == 200:
+                      blocks = parse_blocks(r.text)
+                      for b in blocks:
+                          info = get_block_info(b)
+                          channel_name_mapped = info['name'].strip()
+                          active_urls = [u.strip() for u in info['urls'] if not u.strip().startswith('#')]
+                          if active_urls:
+                              if channel_name_mapped not in mapped_channels_data:
+                                  mapped_channels_data[channel_name_mapped] = []
+                              for u in active_urls:
+                                  if u not in mapped_channels_data[channel_name_mapped]:
+                                      mapped_channels_data[channel_name_mapped].append(u)
+              except Exception as e:
+                  print(f"Error loading mapping playlist {url}: {e}")
 
-def extract_channel_name(extinf_line):
-    """EXTINF লাইন থেকে চ্যানেলের নাম বের করে"""
-    match = re.search(r',([^,]+)$', extinf_line)
-    return match.group(1).strip() if match else ""
+          def get_mapped_urls_for_channel(local_name):
+              matched_key = None
+              for key in CHANNEL_MAPPING:
+                  if key.lower() == local_name.lower().strip():
+                      matched_key = key
+                      break
+              if not matched_key:
+                  return []
+              
+              keywords = CHANNEL_MAPPING[matched_key]
+              collected_urls = []
+              for mapped_name, urls in mapped_channels_data.items():
+                  for kw in keywords:
+                      if kw.lower() == mapped_name.lower().strip() or kw.lower() in mapped_name.lower():
+                          for u in urls:
+                              if u not in collected_urls:
+                                  collected_urls.append(u)
+              return collected_urls
 
-def extract_urls(block):
-    """ব্লক থেকে সব URL লাইন (http:// বা https:// দিয়ে শুরু) বের করে"""
-    lines = block.splitlines()
-    urls = [line for line in lines if line.startswith(('http://', 'https://'))]
-    return urls
+          # 2. Parse Local gh-pages playlist
+          try:
+              r = requests.get(LOCAL_SOURCE_URL, timeout=15)
+              local_content = r.text
+          except Exception as e:
+              print(f"Error loading local source playlist: {e}")
+              exit(1)
 
-def extract_first_extinf(block):
-    """ব্লকের প্রথম লাইন (EXTINF) ফেরত দেয়"""
-    return block.splitlines()[0]
+          # Parse header up to first #EXTINF
+          header_lines = []
+          for line in local_content.split('\n'):
+              if line.strip().startswith('#EXTINF:'):
+                  break
+              header_lines.append(line)
+          
+          while header_lines and not header_lines[-1].strip():
+              header_lines.pop()
 
-# ------------------------------------------------------------
-# 1. gh-pages প্লেলিস্ট প্রক্রিয়া
-# ------------------------------------------------------------
-print("📥 gh-pages ডাউনলোড...")
-gh_content = download(GH_PAGES_URL)
-if not gh_content:
-    print("⚠️ gh-pages ডাউনলোড ব্যর্থ, লোকাল চ্যানেল ছাড়া চলবে")
-    header = "#EXTM3U\n# 👉 gh-pages unavailable\n"
-    gh_blocks = []
-else:
-    lines = gh_content.splitlines()
-    header_lines = []
-    for line in lines:
-        if line.startswith("#EXTINF"):
-            break
-        header_lines.append(line)
-    header = "\n".join(header_lines)
-    gh_blocks = split_blocks(gh_content)
+          # Force header length to be exactly 49 lines for starting insertion at line 50
+          current_len = len(header_lines)
+          if current_len < 49:
+              padding_needed = 49 - current_len
+              for _ in range(padding_needed):
+                  header_lines.append("#")
+          else:
+              header_lines = header_lines[:49]
+          header_text = "\n".join(header_lines)
 
-gh_extinf_list = []
-gh_urls_list = []
-for blk in gh_blocks:
-    extinf = extract_first_extinf(blk)
-    urls = extract_urls(blk)
-    gh_extinf_list.append(extinf)
-    gh_urls_list.append(urls)
+          # Parse and map local blocks
+          local_blocks = parse_blocks(local_content)
+          local_processed_blocks = []
+          timestamp = (datetime.now(timezone.utc) + timedelta(hours=6)).strftime('%Y-%m-%d %H:%M:%S')
 
-# ------------------------------------------------------------
-# 2. সোর্স প্লেলিস্ট প্রক্রিয়া করে আউটপুট তৈরি
-# ------------------------------------------------------------
-source_output_lines = []
-for idx, (url, grp) in enumerate(zip(SOURCE_URLS, SOURCE_GROUPS)):
-    print(f"🟢 প্রসেসিং সোর্স {idx+1}: {grp}")
-    processed = process_source(url, grp)
-    source_output_lines.append("# 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴")
-    source_output_lines.append("")
-    source_output_lines.append(f"# 🟢 {grp} 🟢")
-    source_output_lines.append("")
-    if processed is None:
-        source_output_lines.append("# 🟤🟤🟤🟤🟤🟤🟤🟤🟤🟤 🟤NOT FOUND ANY CHANNELS🟤🟤🟤🟤🟤🟤🟤🟤🟤🟤 🟤")
-    else:
-        for blk in processed:
-            source_output_lines.append(blk)
-            source_output_lines.append("")   # এক ফাঁকা লাইন
-            source_output_lines.append("")   # দুই ফাঁকা লাইন (নির্দেশ অনুযায়ী)
-    source_output_lines.append("")
-    source_output_lines.append(f"# 🆕 {grp} 👉 Updateded ✅")
-    source_output_lines.append("")
-    source_output_lines.append("")
+          for b in local_blocks:
+              info = get_block_info(b)
+              channel_name = info['name']
+              mapped_urls = get_mapped_urls_for_channel(channel_name)
+              
+              existing_urls = info['urls']
+              existing_urls_clean = [u.lstrip('#').strip() for u in existing_urls]
+              
+              new_urls_to_prepend = []
+              has_skipped = False
+              
+              for m_url in mapped_urls:
+                  m_url_clean = m_url.strip()
+                  if m_url_clean in existing_urls_clean:
+                      has_skipped = True
+                  else:
+                      new_urls_to_prepend.append(m_url_clean)
+              
+              new_block_lines = [info['extinf']]
+              if has_skipped:
+                  skip_message = f"#AUTO-UPDATED - {channel_name} ⛔ SKIPPED ⛔ - {timestamp} 🟡 - 🔄 - 🔴"
+                  new_block_lines.append(skip_message)
+              elif len(new_urls_to_prepend) > 0:
+                  update_message = f"#AUTO-UPDATED - {channel_name} ✅- {timestamp} 🟡 - 🔄 - 🔴"
+                  new_block_lines.append(update_message)
+              
+              for u in new_urls_to_prepend:
+                  new_block_lines.append(u)
+              
+              for line in b[1:]:
+                  line_strip = line.strip()
+                  if not line_strip:
+                      continue
+                  new_block_lines.append(line)
+                  potential_url = line_strip.lstrip('#').strip()
+                  if potential_url.startswith('http://') or potential_url.startswith('https://'):
+                      if potential_url in [m.strip() for m in mapped_urls]:
+                          new_block_lines.append("# 🔴 Duplicate Link Found 🔴")
+              
+              local_processed_blocks.append("\n".join([l for l in new_block_lines if l.strip()]))
 
-# ------------------------------------------------------------
-# 3. ম্যাপিং ও লোকাল চ্যানেল আপডেট
-# ------------------------------------------------------------
-local_output_lines = []
-timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+          # 3. Compile output content
+          content_parts = []
+          source_parts = []
+          for sp in SOURCE_PLAYLISTS:
+              sp_content = []
+              sp_content.append("# 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴")
+              sp_content.append(f"# 🟢 {sp['title']} 🟢")
+              
+              blocks = process_source_playlist(sp['url'], sp['title'])
+              if blocks is None or len(blocks) == 0:
+                  sp_content.append("# 🟤🟤🟤🟤🟤🟤🟤🟤🟤🟤 🟤NOT FOUND ANY CHANNELS🟤🟤🟤🟤🟤🟤🟤🟤🟤🟤 🟤")
+              else:
+                  block_strings = []
+                  for b in blocks:
+                      block_strings.append("\n".join([line for line in b if line.strip()]))
+                  sp_content.append("\n\n\n".join(block_strings))
+              
+              sp_content.append(f"# 🆕 {sp['title']} 👉 Updateded ✅")
+              source_parts.append("\n\n\n".join(sp_content))
 
-if gh_blocks:
-    # ম্যাপিং সোর্স একত্রিত
-    mapping_content = ""
-    for map_url in MAPPING_URLS:
-        print(f"📥 ম্যাপিং সোর্স: {map_url}")
-        cont = download(map_url)
-        if cont:
-            mapping_content += cont + "\n"
-    # ম্যাপিং ব্লক থেকে নাম ও URL ডিকশনারি
-    map_blocks = split_blocks(mapping_content) if mapping_content else []
-    mapping_dict = {}
-    for blk in map_blocks:
-        extinf = extract_first_extinf(blk)
-        ch_name = extract_channel_name(extinf).lower()
-        if not ch_name:
-            continue
-        urls = extract_urls(blk)
-        if ch_name in mapping_dict:
-            mapping_dict[ch_name].extend(urls)
-        else:
-            mapping_dict[ch_name] = urls
+          content_parts.append("\n\n\n".join(source_parts))
+          content_parts.append("# 🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡 Local Channel Updated  🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡")
+          content_parts.append("\n\n\n".join(local_processed_blocks))
 
-    # প্রতিটি gh-pages চ্যানেলের জন্য ম্যাপিং
-    for extinf, old_urls in zip(gh_extinf_list, gh_urls_list):
-        ch_name_full = extract_channel_name(extinf)
-        # কীওয়ার্ড খোঁজ (case-sensitive exact match)
-        keywords = CHANNEL_MAP.get(ch_name_full, [])
-        new_links = []
-        if keywords:
-            for kw in keywords:
-                kw_lower = kw.lower()
-                for map_ch, map_links in mapping_dict.items():
-                    if kw_lower in map_ch:
-                        new_links.extend(map_links)
-        # ডুপ্লিকেট চেক
-        final_new = []
-        skipped = []
-        for link in new_links:
-            if link in old_urls:
-                skipped.append(link)
-            else:
-                final_new.append(link)
-        # আউটপুট ব্লক তৈরি
-        if not final_new and skipped:
-            local_output_lines.append(f"#AUTO-UPDATED - {ch_name_full} ⛔ SKIPPED ⛔ - {timestamp} 🟡 - 🔄 - 🔴")
-            for s in skipped:
-                local_output_lines.append(f"#🔴 Duplicate Link Found 🔴 {s}")
-        elif final_new:
-            local_output_lines.append(f"#AUTO-UPDATED - {ch_name_full} ✅- {timestamp} 🟡 - 🔄 - 🔴")
-            for ln in final_new:
-                local_output_lines.append(ln)
-            for old in old_urls:
-                local_output_lines.append(old)
-            for s in skipped:
-                local_output_lines.append(f"#🔴 Duplicate Link Found 🔴 {s}")
-        else:
-            local_output_lines.append(extinf)
-            for old in old_urls:
-                local_output_lines.append(old)
-        local_output_lines.append("")
-        local_output_lines.append("")
-else:
-    local_output_lines.append("⚠️ gh-pages উপলব্ধ নয়, লোকাল চ্যানেল ব্লক খালি")
+          rest_of_content = "\n\n\n".join(content_parts)
+          final_text = header_text + "\n" + rest_of_content
 
-# ------------------------------------------------------------
-# 4. ফাইনাল প্লেলিস্ট তৈরি
-# ------------------------------------------------------------
-final_playlist_lines = []
-final_playlist_lines.append(header)
-final_playlist_lines.append("")
-final_playlist_lines.extend(source_output_lines)
-final_playlist_lines.append("# 🟡🟡🟡🟡🟡🟡🟡🟡🟡 Local Channel Updated  🟡🟡🟡🟡🟡🟡🟡🟡🟡")
-final_playlist_lines.append("")
-final_playlist_lines.extend(local_output_lines)
+          # Write results to output file
+          output_path = "pizza-repo/LiveEventSports.m3u"
+          with open(output_path, "w", encoding="utf-8") as f:
+              f.write(final_text)
+          EOF
+          python update_playlist.py
 
-final_content = "\n".join(final_playlist_lines)
-print("✅ প্লেলিস্ট তৈরি সম্পন্ন")
-
-# ------------------------------------------------------------
-# 5. গিটহাবে পুশ (API ব্যবহার করে)
-# ------------------------------------------------------------
-token = os.environ.get("PAT_TOKEN")
-if not token:
-    print("❌ PAT_TOKEN সেট করা নেই", file=sys.stderr)
-    sys.exit(1)
-
-url = f"https://api.github.com/repos/{TARGET_REPO}/contents/{TARGET_FILE}"
-headers = {
-    "Authorization": f"Bearer {token}",
-    "Accept": "application/vnd.github.v3+json"
-}
-# বর্তমান ফাইলের SHA পাওয়া
-resp = requests.get(url, headers=headers)
-sha = resp.json().get("sha") if resp.status_code == 200 else None
-
-import base64
-encoded = base64.b64encode(final_content.encode()).decode()
-data = {
-    "message": f"Auto-update playlist {datetime.utcnow().isoformat()}",
-    "content": encoded,
-    "branch": TARGET_BRANCH
-}
-if sha:
-    data["sha"] = sha
-
-resp = requests.put(url, headers=headers, json=data)
-if resp.status_code in (200, 201):
-    print("✅ সফলভাবে পুশ করা হয়েছে")
-else:
-    print(f"❌ পুশ ব্যর্থ: {resp.status_code} - {resp.text}", file=sys.stderr)
-    sys.exit(1)
-EOF
+      - name: Commit and Push Changes
+        env:
+          FIRST_RUN: ${{ github.event.inputs.first_run }}
+        run: |
+          cd pizza-repo
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes found. Commit skipped."
+          else
+            # Get current Bangladesh time (BST / UTC+6)
+            CURRENT_TIME=$(date -u -d "+6 hours" +"%Y-%m-%d %H:%M:%S")
+            
+            if [ "$FIRST_RUN" = "true" ]; then
+              COMMIT_MESSAGE="🆗 Live Event Sports : 🆕 Start 🆕 - $CURRENT_TIME 🟡"
+            elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              COMMIT_MESSAGE="🆗 Live Event Sports : 🆕 Start Done ✅ - $CURRENT_TIME 🟡"
+            else
+              COMMIT_MESSAGE="🆗 Live Event Sports : 🔄 Updated Done ✅ - $CURRENT_TIME 🟡"
+            fi
+            
+            git add LiveEventSports.m3u
+            git commit -m "$COMMIT_MESSAGE"
+            git push origin main
+          fi
