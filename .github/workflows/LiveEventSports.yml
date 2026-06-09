@@ -28,7 +28,7 @@ jobs:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
           FIRST_RUN: ${{ github.event_name == 'schedule' && github.run_number == 1 }}
         run: |
-          set -euo pipefail
+          set -euxo pipefail   # -x যোগ করে প্রতিটি কমান্ড লগ করবে
           WORK_DIR="/tmp/playlist_update"
           rm -rf "$WORK_DIR"
           mkdir -p "$WORK_DIR"
@@ -72,48 +72,39 @@ jobs:
           CHANNEL_MAP["SATV"]="SA TV"
           CHANNEL_MAP["GTV"]="Gazi TV"
           
-          # ------------------------------------------------------------
-          # উন্নত ডাউনলোড ফাংশন (ভারবোস ও ডিটেইল্ড এরর)
-          # ------------------------------------------------------------
           download() {
-            local url="$1"
-            local out="$2"
-            echo "⏳ ডাউনলোড শুরু: $url"
-            # -v যোগ করে বিস্তারিত লগ পাবেন, --stderr - ব্যবহার করে আউটপুট ক্যাপচার
-            if curl -v -fsSL --retry 3 --max-time 30 -o "$out" "$url" 2>&1; then
-              echo "✅ ডাউনলোড সফল: $out ($(wc -c < "$out") bytes)"
-              return 0
-            else
-              local exit_code=$?
-              echo "❌ ডাউনলোড ব্যর্থ (exit $exit_code): $url" >&2
-              return 1
+            local url="$1" out="$2"
+            echo "⏳ ডাউনলোড: $url"
+            curl -fsSL --retry 3 --max-time 30 -o "$out" "$url" || { echo "❌ ডাউনলোড ব্যর্থ: $url"; return 1; }
+            echo "✅ ডাউনলোড সফল: $out ($(wc -c < "$out") bytes)"
+          }
+          
+          # সরলীকৃত split_blocks (নিরাপদ)
+          split_blocks() {
+            local input="$1" prefix="$2"
+            local block_num=0 block_file
+            local in_block=0
+            while IFS= read -r line; do
+              if [[ "$line" == \#EXTINF* ]]; then
+                if [[ $in_block -eq 1 ]]; then
+                  echo "$block_file"
+                fi
+                block_num=$((block_num+1))
+                block_file="$WORK_DIR/${prefix}_block_${block_num}.txt"
+                > "$block_file"
+                in_block=1
+              fi
+              if [[ $in_block -eq 1 ]]; then
+                printf '%s\n' "$line" >> "$block_file"
+              fi
+            done < "$input"
+            if [[ $in_block -eq 1 ]]; then
+              echo "$block_file"
             fi
           }
           
-          # ------------------------------------------------------------
-          # split_blocks (অপরিবর্তিত)
-          # ------------------------------------------------------------
-          split_blocks() {
-            local input="$1"
-            local prefix="$2"
-            awk -v prefix="$prefix" -v workdir="$WORK_DIR" '
-              BEGIN { block_num=0; in_block=0 }
-              /^#EXTINF/ {
-                if (in_block) close(block_file)
-                block_num++
-                block_file = workdir "/" prefix "_block_" block_num ".txt"
-                in_block = 1
-                print block_file
-              }
-              { if (in_block) print >> block_file }
-              END { if (in_block) close(block_file) }
-            ' "$input"
-          }
-          
           fix_group_title() {
-            local blk="$1"
-            local new_grp="$2"
-            sed -i -E 's/group-title="[^"]*"/group-title="'"$new_grp"'"/' "$blk"
+            sed -i -E 's/group-title="[^"]*"/group-title="'"$2"'"/' "$1"
           }
           
           is_football_cricket() {
@@ -121,26 +112,21 @@ jobs:
           }
           
           process_source() {
-            local url="$1"
-            local grp="$2"
+            local url="$1" grp="$2"
             local tmp_dir="$WORK_DIR/source_$$_$RANDOM"
             mkdir -p "$tmp_dir"
             local playlist="$tmp_dir/playlist.m3u"
             download "$url" "$playlist" || { rm -rf "$tmp_dir"; return 1; }
-            
             local blocks_file="$tmp_dir/blocks.lst"
             split_blocks "$playlist" "$grp" > "$blocks_file"
-            if [ ! -s "$blocks_file" ]; then
+            if [[ ! -s "$blocks_file" ]]; then
               rm -rf "$tmp_dir"
               return 1
             fi
-            
             while IFS= read -r blk; do
               fix_group_title "$blk" "$grp"
             done < "$blocks_file"
-            
-            local football=()
-            local other=()
+            local football=() other=()
             while IFS= read -r blk; do
               if is_football_cricket "$blk"; then
                 football+=("$blk")
@@ -148,7 +134,6 @@ jobs:
                 other+=("$blk")
               fi
             done < "$blocks_file"
-            
             local out_file="$tmp_dir/out.txt"
             > "$out_file"
             for blk in "${football[@]}"; do cat "$blk"; echo ""; done >> "$out_file"
@@ -157,19 +142,17 @@ jobs:
             rm -rf "$tmp_dir"
           }
           
-          # ------------------------------------------------------------
-          # 1. gh-pages প্লেলিস্ট ডাউনলোড (এবার ব্যর্থ হলেও স্ক্রিপ্ট চলবে, কিন্তু লোকাল চ্যানেল ছাড়া)
-          # ------------------------------------------------------------
           echo "📥 gh-pages ডাউনলোড..."
           GH_AVAILABLE=true
           if download "$GH_PAGES_URL" "gh_pages.m3u"; then
             echo "✅ gh-pages ডাউনলোড সম্পন্ন"
+            # হেডার বের করি (প্রথম #EXTINF এর আগের সব লাইন)
             awk '/^#EXTINF/{exit} {print}' "gh_pages.m3u" > "header.txt"
+            # ব্লক তৈরি
             GH_BLOCKS=()
             while IFS= read -r blk; do
               GH_BLOCKS+=("$blk")
             done < <(split_blocks "gh_pages.m3u" "gh")
-            
             GH_EXTINF=()
             GH_URLS=()
             for blk in "${GH_BLOCKS[@]}"; do
@@ -179,21 +162,16 @@ jobs:
               GH_URLS+=("$urls")
             done
           else
-            echo "⚠️ gh-pages ডাউনলোড ব্যর্থ, লোকাল চ্যানেল আপডেট হবে না। শুধু সোর্স প্লেলিস্ট প্রসেস হবে।"
+            echo "⚠️ gh-pages ব্যর্থ, লোকাল চ্যানেল ছাড়া চলবে"
             GH_AVAILABLE=false
-            # একটি ডামি হেডার তৈরি যাতে ফাইনাল প্লেলিস্ট তৈরি করা যায়
             echo "#EXTM3U" > "header.txt"
             echo "# 👉 gh-pages unavailable" >> "header.txt"
             GH_EXTINF=()
             GH_URLS=()
           fi
           
-          # ------------------------------------------------------------
-          # 2. সোর্স প্লেলিস্ট প্রক্রিয়া (এটি আগের মতো চলবে)
-          # ------------------------------------------------------------
           SOURCE_OUTPUT="source_output.txt"
           > "$SOURCE_OUTPUT"
-          
           for idx in "${!SOURCE_URLS[@]}"; do
             url="${SOURCE_URLS[$idx]}"
             grp="${SOURCE_GROUPS[$idx]}"
@@ -221,14 +199,10 @@ jobs:
             fi
           done
           
-          # ------------------------------------------------------------
-          # 3. ম্যাপিং ও লোকাল চ্যানেল আপডেট (শুধু যদি gh-pages সফল হয়)
-          # ------------------------------------------------------------
           LOCAL_OUTPUT="local_output.txt"
           > "$LOCAL_OUTPUT"
           TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S")
-          
-          if [ "$GH_AVAILABLE" = true ]; then
+          if [[ "$GH_AVAILABLE" == true ]]; then
             MAPPING_FILE="$WORK_DIR/mapping_merged.m3u"
             > "$MAPPING_FILE"
             for map_url in "${MAPPING_URLS[@]}"; do
@@ -237,29 +211,26 @@ jobs:
               if download "$map_url" "$tmp_map"; then
                 cat "$tmp_map" >> "$MAPPING_FILE"
               else
-                echo "⚠️ ম্যাপিং সোর্স ডাউনলোড ব্যর্থ: $map_url" >&2
+                echo "⚠️ ম্যাপিং সোর্স ডাউনলোড ব্যর্থ: $map_url"
               fi
             done
-            
             declare -A MAPPING_CHANNELS
             while IFS= read -r blk; do
               extinf=$(head -n1 "$blk")
               ch_name=$(echo "$extinf" | sed -n 's/.*,\(.*\)$/\1/p' | tr '[:upper:]' '[:lower:]')
-              [ -z "$ch_name" ] && continue
+              [[ -z "$ch_name" ]] && continue
               urls=$(grep -E '^https?://' "$blk" | tr '\n' '|')
-              if [ -n "${MAPPING_CHANNELS[$ch_name]-}" ]; then
+              if [[ -n "${MAPPING_CHANNELS[$ch_name]-}" ]]; then
                 MAPPING_CHANNELS[$ch_name]="${MAPPING_CHANNELS[$ch_name]}|$urls"
               else
                 MAPPING_CHANNELS[$ch_name]="$urls"
               fi
             done < <(split_blocks "$MAPPING_FILE" "map")
-            
             for i in "${!GH_EXTINF[@]}"; do
               extinf="${GH_EXTINF[$i]}"
               old_urls_str="${GH_URLS[$i]}"
               IFS='|' read -ra old_urls <<< "$old_urls_str"
               channel_name_full=$(echo "$extinf" | sed -n 's/.*,\(.*\)$/\1/p')
-              
               keywords=""
               for key in "${!CHANNEL_MAP[@]}"; do
                 if [[ "$channel_name_full" == "$key" ]]; then
@@ -267,9 +238,8 @@ jobs:
                   break
                 fi
               done
-              
               new_links=()
-              if [ -n "$keywords" ]; then
+              if [[ -n "$keywords" ]]; then
                 IFS='|' read -ra kw_array <<< "$keywords"
                 for kw in "${kw_array[@]}"; do
                   kw_lower=$(echo "$kw" | tr '[:upper:]' '[:lower:]')
@@ -283,7 +253,6 @@ jobs:
                   done
                 done
               fi
-              
               final_new=()
               skipped=()
               for link in "${new_links[@]}"; do
@@ -291,17 +260,16 @@ jobs:
                 for old in "${old_urls[@]}"; do
                   [[ "$link" == "$old" ]] && { dup=1; break; }
                 done
-                if [ $dup -eq 1 ]; then
+                if [[ $dup -eq 1 ]]; then
                   skipped+=("$link")
                 else
                   final_new+=("$link")
                 fi
               done
-              
-              if [ ${#final_new[@]} -eq 0 ] && [ ${#skipped[@]} -gt 0 ]; then
+              if [[ ${#final_new[@]} -eq 0 && ${#skipped[@]} -gt 0 ]]; then
                 echo "#AUTO-UPDATED - $channel_name_full ⛔ SKIPPED ⛔ - $TIMESTAMP 🟡 - 🔄 - 🔴" >> "$LOCAL_OUTPUT"
                 for s in "${skipped[@]}"; do echo "#🔴 Duplicate Link Found 🔴 $s" >> "$LOCAL_OUTPUT"; done
-              elif [ ${#final_new[@]} -gt 0 ]; then
+              elif [[ ${#final_new[@]} -gt 0 ]]; then
                 echo "#AUTO-UPDATED - $channel_name_full ✅- $TIMESTAMP 🟡 - 🔄 - 🔴" >> "$LOCAL_OUTPUT"
                 for ln in "${final_new[@]}"; do echo "$ln" >> "$LOCAL_OUTPUT"; done
                 for old in "${old_urls[@]}"; do echo "$old" >> "$LOCAL_OUTPUT"; done
@@ -314,12 +282,9 @@ jobs:
               echo "" >> "$LOCAL_OUTPUT"
             done
           else
-            echo "⚠️ gh-pages উপলব্ধ না থাকায় লোকাল চ্যানেল ব্লক খালি রাখা হচ্ছে।" >> "$LOCAL_OUTPUT"
+            echo "⚠️ gh-pages উপলব্ধ নয়, লোকাল চ্যানেল ব্লক খালি" >> "$LOCAL_OUTPUT"
           fi
           
-          # ------------------------------------------------------------
-          # 4. ফাইনাল প্লেলিস্ট তৈরি
-          # ------------------------------------------------------------
           FINAL_PLAYLIST="$WORK_DIR/$TARGET_FILE"
           > "$FINAL_PLAYLIST"
           cat "header.txt" >> "$FINAL_PLAYLIST"
@@ -330,9 +295,6 @@ jobs:
           cat "$LOCAL_OUTPUT" >> "$FINAL_PLAYLIST"
           echo "✅ প্লেলিস্ট তৈরি সম্পন্ন"
           
-          # ------------------------------------------------------------
-          # 5. গিটহাবে পুশ
-          # ------------------------------------------------------------
           echo "📤 পুশ করা হচ্ছে $TARGET_REPO এ..."
           git clone "https://x-access-token:$PAT_TOKEN@github.com/$TARGET_REPO.git" "$WORK_DIR/repo_clone"
           cd "$WORK_DIR/repo_clone"
@@ -341,9 +303,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             COMMIT_MSG="🆗 Live Event Sports : 🆕 Start Done ✅ - $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          elif [ "$FIRST_RUN" == "true" ]; then
+          elif [[ "$FIRST_RUN" == "true" ]]; then
             COMMIT_MSG="🆗 Live Event Sports : 🆕 Start 🆕 - $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           else
             COMMIT_MSG="🆗 Live Event Sports : 🔄 Updated Done ✅ - $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
