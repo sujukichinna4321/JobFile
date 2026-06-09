@@ -20,9 +20,7 @@ jobs:
           path: jobfile
 
       - name: Install required tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y curl jq moreutils
+        run: sudo apt-get update && sudo apt-get install -y curl jq
 
       - name: Update Playlist
         id: update
@@ -31,38 +29,38 @@ jobs:
           FIRST_RUN: ${{ github.event_name == 'schedule' && github.run_number == 1 }}
         run: |
           set -euo pipefail
-          set +u
-
+          WORK_DIR="/tmp/playlist_update"
+          rm -rf "$WORK_DIR"
+          mkdir -p "$WORK_DIR"
+          cd "$WORK_DIR"
+          
           GH_PAGES_URL="https://raw.githubusercontent.com/buzzinguaecn/Pizza/gh-pages/LiveEventSports.m3u"
           TARGET_REPO="buzzinguaecn/Pizza"
           TARGET_BRANCH="main"
           TARGET_FILE="LiveEventSports.m3u"
-          WORK_DIR="/tmp/playlist_update"
-          mkdir -p "$WORK_DIR"
-          cd "$WORK_DIR"
-
-          # সোর্স প্লেলিস্ট (URL এবং গ্রুপ টাইটেল)
-          declare -a SOURCE_URLS=(
+          
+          # সোর্স প্লেলিস্ট
+          SOURCE_URLS=(
             "https://raw.githubusercontent.com/srhady/tapmad-bd/refs/heads/main/tapmad_bd.m3u"
             "https://raw.githubusercontent.com/srhady/bingstream/refs/heads/main/playlist.m3u"
             "https://raw.githubusercontent.com/srhady/SonyLiv/refs/heads/main/sonyliv_playlist.m3u"
             "https://raw.githubusercontent.com/srhady/axsports/main/playlist.m3u"
             "https://raw.githubusercontent.com/srhady/Fancode-bd/main/main_playlist.m3u"
           )
-          declare -a SOURCE_GROUPS=(
+          SOURCE_GROUPS=(
             "SAWARID سواريد - Tampad"
             "SAWARID سواريد - BingStream"
             "SAWARID سواريد - SonyLiv"
             "SAWARID سواريد - Axsports"
             "SAWARID سواريد - Fancode"
           )
-
-          # ম্যাপিং সোর্স প্লেলিস্ট
-          declare -a MAPPING_URLS=(
+          
+          # ম্যাপিং সোর্স
+          MAPPING_URLS=(
             "https://raw.githubusercontent.com/buzzinguaecn/Pizza/main/Pakistan-All-Urdu-All-Farsi.m3u"
             "https://raw.githubusercontent.com/buzzinguaecn/Pizza/main/All-TV.m3u"
           )
-
+          
           # চ্যানেল ম্যাপিং
           declare -A CHANNEL_MAP
           CHANNEL_MAP["BTV National"]="BTV NATIONAL HD|BTV World|BTV"
@@ -76,66 +74,77 @@ jobs:
           CHANNEL_MAP["Deen TV"]="Deen TV"
           CHANNEL_MAP["SATV"]="SA TV"
           CHANNEL_MAP["GTV"]="Gazi TV"
-
-          download_file() { curl -fsSL --max-time 30 -o "$2" "$1" || { echo "❌ ব্যর্থ: $1" >&2; return 1; }; }
-
-          # প্লেলিস্টকে ব্লকে ভাগ করা (প্রতি ব্লক = #EXTINF থেকে পরবর্তী #EXTINF পর্যন্ত সব লাইন)
+          
+          # ------------------------------------------------------------
+          # ফাংশন: ডাউনলোড (রিটার্ন কোড 1 যদি ব্যর্থ)
+          # ------------------------------------------------------------
+          download() {
+            local url="$1"
+            local out="$2"
+            curl -fsSL --retry 3 --max-time 30 -o "$out" "$url"
+          }
+          
+          # ------------------------------------------------------------
+          # প্লেলিস্ট থেকে ব্লক আলাদা করা (প্রতি ব্লক: #EXTINF থেকে পরবর্তী #EXTINF)
+          # আউটপুট: প্রতিটি ব্লকের ফাইল পাথ (এক লাইনে একটি)
+          # ------------------------------------------------------------
           split_blocks() {
             local input="$1"
             local prefix="$2"
-            local block_num=0
-            local block_file=""
-            local in_block=0
-            while IFS= read -r line; do
-              if [[ "$line" == \#EXTINF* ]]; then
-                if [ $in_block -eq 1 ]; then
-                  echo "$block_file"
-                fi
-                block_num=$((block_num+1))
-                block_file="$WORK_DIR/${prefix}_block_${block_num}.txt"
-                > "$block_file"
-                in_block=1
-              fi
-              if [ $in_block -eq 1 ]; then
-                echo "$line" >> "$block_file"
-              fi
-            done < "$input"
-            if [ $in_block -eq 1 ]; then
-              echo "$block_file"
-            fi
+            awk -v prefix="$prefix" -v workdir="$WORK_DIR" '
+              BEGIN { block_num=0; in_block=0 }
+              /^#EXTINF/ {
+                if (in_block) close(block_file)
+                block_num++
+                block_file = workdir "/" prefix "_block_" block_num ".txt"
+                in_block = 1
+                print block_file
+              }
+              { if (in_block) print >> block_file }
+              END { if (in_block) close(block_file) }
+            ' "$input"
           }
-
-          # ব্লকের group-title পরিবর্তন
+          
+          # ------------------------------------------------------------
+          # ব্লকের group-title প্রতিস্থাপন (ইন-প্লেস)
+          # ------------------------------------------------------------
           fix_group_title() {
             local blk="$1"
             local new_grp="$2"
             sed -i -E 's/group-title="[^"]*"/group-title="'"$new_grp"'"/' "$blk"
           }
-
-          # ব্লকে ফুটবল/ক্রিকেট আছে কিনা
+          
+          # ------------------------------------------------------------
+          # ব্লকে ফুটবল/ক্রিকেট কীওয়ার্ড আছে কিনা
+          # ------------------------------------------------------------
           is_football_cricket() {
-            grep -qiE '(football|soccer|ফুটবল|cricket|ক্রিকেট)' "$1"
+            grep -qiE '(football|soccer|ফুটবל|cricket|ক্রিকেট)' "$1"
           }
-
-          # একটি সোর্স প্লেলিস্ট প্রক্রিয়া করে আউটপুট তৈরি
-          process_one_source() {
+          
+          # ------------------------------------------------------------
+          # একটি সোর্স প্রক্রিয়া: ডাউনলোড → ব্লক → group-title → ফুটবল/ক্রিকেট সাজানো → আউটপুট
+          # ------------------------------------------------------------
+          process_source() {
             local url="$1"
             local grp="$2"
-            local tmp_dir="$WORK_DIR/tmp_$$_$RANDOM"
+            local tmp_dir="$WORK_DIR/source_$$_$RANDOM"
             mkdir -p "$tmp_dir"
             local playlist="$tmp_dir/playlist.m3u"
-            download_file "$url" "$playlist" || { rm -rf "$tmp_dir"; return 1; }
+            download "$url" "$playlist" || { rm -rf "$tmp_dir"; return 1; }
+            
             local blocks_file="$tmp_dir/blocks.lst"
             split_blocks "$playlist" "$grp" > "$blocks_file"
             if [ ! -s "$blocks_file" ]; then
               rm -rf "$tmp_dir"
               return 1
             fi
+            
             # group-title ঠিক করা
             while IFS= read -r blk; do
               fix_group_title "$blk" "$grp"
             done < "$blocks_file"
-            # ফুটবল/ক্রিকেট আলাদা
+            
+            # ফুটবল/ক্রিকেট ব্লক আলাদা
             local football=()
             local other=()
             while IFS= read -r blk; do
@@ -145,26 +154,20 @@ jobs:
                 other+=("$blk")
               fi
             done < "$blocks_file"
-            # আউটপুট ফাইল
+            
             local out_file="$tmp_dir/out.txt"
             > "$out_file"
-            for blk in "${football[@]}"; do
-              cat "$blk" >> "$out_file"
-              echo "" >> "$out_file"
-            done
-            for blk in "${other[@]}"; do
-              cat "$blk" >> "$out_file"
-              echo "" >> "$out_file"
-            done
+            for blk in "${football[@]}"; do cat "$blk"; echo ""; done >> "$out_file"
+            for blk in "${other[@]}"; do cat "$blk"; echo ""; done >> "$out_file"
             cat "$out_file"
             rm -rf "$tmp_dir"
           }
-
+          
           # ------------------------------------------------------------
-          # 1. gh-pages প্লেলিস্ট ডাউনলোড ও প্রক্রিয়া
+          # 1. gh-pages হেডার ও ব্লক
           # ------------------------------------------------------------
           echo "📥 gh-pages ডাউনলোড..."
-          download_file "$GH_PAGES_URL" "gh_pages.m3u" || exit 1
+          download "$GH_PAGES_URL" "gh_pages.m3u" || { echo "❌ gh-pages ডাউনলোড ব্যর্থ"; exit 1; }
           awk '/^#EXTINF/{exit} {print}' "gh_pages.m3u" > "header.txt"
           
           GH_BLOCKS=()
@@ -180,7 +183,7 @@ jobs:
             GH_EXTINF+=("$extinf")
             GH_URLS+=("$urls")
           done
-
+          
           # ------------------------------------------------------------
           # 2. সোর্স প্লেলিস্ট প্রক্রিয়া করে আউটপুট তৈরি
           # ------------------------------------------------------------
@@ -191,7 +194,7 @@ jobs:
             url="${SOURCE_URLS[$idx]}"
             grp="${SOURCE_GROUPS[$idx]}"
             echo "🟢 প্রসেসিং সোর্স $((idx+1)): $grp"
-            if process_one_source "$url" "$grp" > "tmp_source_$idx.out" 2>/dev/null; then
+            if process_source "$url" "$grp" > "tmp_source_$idx.out" 2>/dev/null; then
               echo "# 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴" >> "$SOURCE_OUTPUT"
               echo "" >> "$SOURCE_OUTPUT"
               echo "# 🟢 $grp 🟢" >> "$SOURCE_OUTPUT"
@@ -213,7 +216,7 @@ jobs:
               echo "" >> "$SOURCE_OUTPUT"
             fi
           done
-
+          
           # ------------------------------------------------------------
           # 3. ম্যাপিং ও লোকাল চ্যানেল আপডেট
           # ------------------------------------------------------------
@@ -221,14 +224,16 @@ jobs:
           > "$LOCAL_OUTPUT"
           TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S")
           
+          # ম্যাপিং সোর্স একত্রিত
           MAPPING_FILE="$WORK_DIR/mapping_merged.m3u"
           > "$MAPPING_FILE"
           for map_url in "${MAPPING_URLS[@]}"; do
             echo "📥 ম্যাপিং সোর্স: $map_url"
             tmp_map="$WORK_DIR/map_$$.m3u"
-            download_file "$map_url" "$tmp_map" && cat "$tmp_map" >> "$MAPPING_FILE"
+            download "$map_url" "$tmp_map" && cat "$tmp_map" >> "$MAPPING_FILE"
           done
           
+          # ম্যাপিং ব্লক থেকে চ্যানেল ও URL সংগ্রহ
           declare -A MAPPING_CHANNELS
           while IFS= read -r blk; do
             extinf=$(head -n1 "$blk")
@@ -242,11 +247,13 @@ jobs:
             fi
           done < <(split_blocks "$MAPPING_FILE" "map")
           
+          # gh-pages চ্যানেলের জন্য ম্যাপিং
           for i in "${!GH_EXTINF[@]}"; do
             extinf="${GH_EXTINF[$i]}"
             old_urls_str="${GH_URLS[$i]}"
             IFS='|' read -ra old_urls <<< "$old_urls_str"
             channel_name_full=$(echo "$extinf" | sed -n 's/.*,\(.*\)$/\1/p')
+            
             keywords=""
             for key in "${!CHANNEL_MAP[@]}"; do
               if [[ "$channel_name_full" == "$key" ]]; then
@@ -254,6 +261,7 @@ jobs:
                 break
               fi
             done
+            
             new_links=()
             if [ -n "$keywords" ]; then
               IFS='|' read -ra kw_array <<< "$keywords"
@@ -269,6 +277,7 @@ jobs:
                 done
               done
             fi
+            
             final_new=()
             skipped=()
             for link in "${new_links[@]}"; do
@@ -282,6 +291,7 @@ jobs:
                 final_new+=("$link")
               fi
             done
+            
             if [ ${#final_new[@]} -eq 0 ] && [ ${#skipped[@]} -gt 0 ]; then
               echo "#AUTO-UPDATED - $channel_name_full ⛔ SKIPPED ⛔ - $TIMESTAMP 🟡 - 🔄 - 🔴" >> "$LOCAL_OUTPUT"
               for s in "${skipped[@]}"; do echo "#🔴 Duplicate Link Found 🔴 $s" >> "$LOCAL_OUTPUT"; done
@@ -297,9 +307,9 @@ jobs:
             echo "" >> "$LOCAL_OUTPUT"
             echo "" >> "$LOCAL_OUTPUT"
           done
-
+          
           # ------------------------------------------------------------
-          # 4. ফাইনাল প্লেলিস্ট তৈরি
+          # 4. ফাইনাল প্লেলিস্ট
           # ------------------------------------------------------------
           FINAL_PLAYLIST="$WORK_DIR/$TARGET_FILE"
           > "$FINAL_PLAYLIST"
@@ -310,14 +320,13 @@ jobs:
           echo "" >> "$FINAL_PLAYLIST"
           cat "$LOCAL_OUTPUT" >> "$FINAL_PLAYLIST"
           echo "✅ প্লেলিস্ট তৈরি সম্পন্ন"
-
+          
           # ------------------------------------------------------------
-          # 5. গিটহাবে পুশ করা
+          # 5. গিটহাবে পুশ
           # ------------------------------------------------------------
           echo "📤 পুশ করা হচ্ছে $TARGET_REPO এ..."
-          CLONE_DIR="$WORK_DIR/repo_clone"
-          git clone "https://x-access-token:$PAT_TOKEN@github.com/$TARGET_REPO.git" "$CLONE_DIR"
-          cd "$CLONE_DIR"
+          git clone "https://x-access-token:$PAT_TOKEN@github.com/$TARGET_REPO.git" "$WORK_DIR/repo_clone"
+          cd "$WORK_DIR/repo_clone"
           git checkout "$TARGET_BRANCH"
           cp "$FINAL_PLAYLIST" "$TARGET_FILE"
           git config user.name "github-actions[bot]"
@@ -337,5 +346,5 @@ jobs:
             git push origin "$TARGET_BRANCH"
             echo "✅ সফলভাবে পুশ করা হয়েছে"
           else
-            echo "ℹ️ কোনো পরিবর্তন নেই, পুশের প্রয়োজন নেই"
+            echo "ℹ️ কোনো পরিবর্তন নেই"
           fi
