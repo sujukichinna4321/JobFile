@@ -47,7 +47,7 @@ jobs:
           LOCAL_SOURCE_URL = "https://raw.githubusercontent.com/buzzinguaecn/Pizza/gh-pages/LiveEventSports.m3u"
 
           CHANNEL_MAPPING = {
-              "BTV National": ["BTV NATIONAL HD", "BTV World"],
+              "T Sports": ["T Sports", "T Sports HD", "TSports"],
               "BTV CTG": ["BTV CTG"],
               "Somoy TV": ["Somoy News TV", "Somoy TV"],
               "Jamuna TV": ["Jamuna TV", "JAMUNA TV", "Jamuna"],
