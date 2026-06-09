@@ -19,303 +19,301 @@ jobs:
           repository: sujukichinna4321/JobFile
           path: jobfile
 
-      - name: Install required tools
-        run: sudo apt-get update && sudo apt-get install -y curl jq
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
 
-      - name: Update Playlist
-        id: update
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Update playlist
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
           FIRST_RUN: ${{ github.event_name == 'schedule' && github.run_number == 1 }}
-        run: |
-          set -euxo pipefail   # -x যোগ করে প্রতিটি কমান্ড লগ করবে
-          WORK_DIR="/tmp/playlist_update"
-          rm -rf "$WORK_DIR"
-          mkdir -p "$WORK_DIR"
-          cd "$WORK_DIR"
-          
-          GH_PAGES_URL="https://raw.githubusercontent.com/buzzinguaecn/Pizza/gh-pages/LiveEventSports.m3u"
-          TARGET_REPO="buzzinguaecn/Pizza"
-          TARGET_BRANCH="main"
-          TARGET_FILE="LiveEventSports.m3u"
-          
-          SOURCE_URLS=(
-            "https://raw.githubusercontent.com/srhady/tapmad-bd/refs/heads/main/tapmad_bd.m3u"
-            "https://raw.githubusercontent.com/srhady/bingstream/refs/heads/main/playlist.m3u"
-            "https://raw.githubusercontent.com/srhady/SonyLiv/refs/heads/main/sonyliv_playlist.m3u"
-            "https://raw.githubusercontent.com/srhady/axsports/main/playlist.m3u"
-            "https://raw.githubusercontent.com/srhady/Fancode-bd/main/main_playlist.m3u"
-          )
-          SOURCE_GROUPS=(
-            "SAWARID سواريد - Tampad"
-            "SAWARID سواريد - BingStream"
-            "SAWARID سواريد - SonyLiv"
-            "SAWARID سواريد - Axsports"
-            "SAWARID سواريد - Fancode"
-          )
-          
-          MAPPING_URLS=(
-            "https://raw.githubusercontent.com/buzzinguaecn/Pizza/main/Pakistan-All-Urdu-All-Farsi.m3u"
-            "https://raw.githubusercontent.com/buzzinguaecn/Pizza/main/All-TV.m3u"
-          )
-          
-          declare -A CHANNEL_MAP
-          CHANNEL_MAP["BTV National"]="BTV NATIONAL HD|BTV World|BTV"
-          CHANNEL_MAP["BTV CTG"]="BTV CTG"
-          CHANNEL_MAP["Somoy TV"]="Somoy News TV|Somoy TV"
-          CHANNEL_MAP["Jamuna TV"]="Jamuna TV|JAMUNA TV|Jamuna"
-          CHANNEL_MAP["Ekushey TV"]="Ekushey TV"
-          CHANNEL_MAP["NTV BD"]="NTV"
-          CHANNEL_MAP["NTV-Europe"]="NTV Europe"
-          CHANNEL_MAP["Channel 24"]="Channel 24"
-          CHANNEL_MAP["Deen TV"]="Deen TV"
-          CHANNEL_MAP["SATV"]="SA TV"
-          CHANNEL_MAP["GTV"]="Gazi TV"
-          
-          download() {
-            local url="$1" out="$2"
-            echo "⏳ ডাউনলোড: $url"
-            curl -fsSL --retry 3 --max-time 30 -o "$out" "$url" || { echo "❌ ডাউনলোড ব্যর্থ: $url"; return 1; }
-            echo "✅ ডাউনলোড সফল: $out ($(wc -c < "$out") bytes)"
-          }
-          
-          # সরলীকৃত split_blocks (নিরাপদ)
-          split_blocks() {
-            local input="$1" prefix="$2"
-            local block_num=0 block_file
-            local in_block=0
-            while IFS= read -r line; do
-              if [[ "$line" == \#EXTINF* ]]; then
-                if [[ $in_block -eq 1 ]]; then
-                  echo "$block_file"
-                fi
-                block_num=$((block_num+1))
-                block_file="$WORK_DIR/${prefix}_block_${block_num}.txt"
-                > "$block_file"
-                in_block=1
-              fi
-              if [[ $in_block -eq 1 ]]; then
-                printf '%s\n' "$line" >> "$block_file"
-              fi
-            done < "$input"
-            if [[ $in_block -eq 1 ]]; then
-              echo "$block_file"
-            fi
-          }
-          
-          fix_group_title() {
-            sed -i -E 's/group-title="[^"]*"/group-title="'"$2"'"/' "$1"
-          }
-          
-          is_football_cricket() {
-            grep -qiE '(football|soccer|ফুটবল|cricket|ক্রিকেট)' "$1"
-          }
-          
-          process_source() {
-            local url="$1" grp="$2"
-            local tmp_dir="$WORK_DIR/source_$$_$RANDOM"
-            mkdir -p "$tmp_dir"
-            local playlist="$tmp_dir/playlist.m3u"
-            download "$url" "$playlist" || { rm -rf "$tmp_dir"; return 1; }
-            local blocks_file="$tmp_dir/blocks.lst"
-            split_blocks "$playlist" "$grp" > "$blocks_file"
-            if [[ ! -s "$blocks_file" ]]; then
-              rm -rf "$tmp_dir"
-              return 1
-            fi
-            while IFS= read -r blk; do
-              fix_group_title "$blk" "$grp"
-            done < "$blocks_file"
-            local football=() other=()
-            while IFS= read -r blk; do
-              if is_football_cricket "$blk"; then
-                football+=("$blk")
-              else
-                other+=("$blk")
-              fi
-            done < "$blocks_file"
-            local out_file="$tmp_dir/out.txt"
-            > "$out_file"
-            for blk in "${football[@]}"; do cat "$blk"; echo ""; done >> "$out_file"
-            for blk in "${other[@]}"; do cat "$blk"; echo ""; done >> "$out_file"
-            cat "$out_file"
-            rm -rf "$tmp_dir"
-          }
-          
-          echo "📥 gh-pages ডাউনলোড..."
-          GH_AVAILABLE=true
-          if download "$GH_PAGES_URL" "gh_pages.m3u"; then
-            echo "✅ gh-pages ডাউনলোড সম্পন্ন"
-            # হেডার বের করি (প্রথম #EXTINF এর আগের সব লাইন)
-            awk '/^#EXTINF/{exit} {print}' "gh_pages.m3u" > "header.txt"
-            # ব্লক তৈরি
-            GH_BLOCKS=()
-            while IFS= read -r blk; do
-              GH_BLOCKS+=("$blk")
-            done < <(split_blocks "gh_pages.m3u" "gh")
-            GH_EXTINF=()
-            GH_URLS=()
-            for blk in "${GH_BLOCKS[@]}"; do
-              extinf=$(head -n1 "$blk")
-              urls=$(grep -E '^https?://' "$blk" | tr '\n' '|')
-              GH_EXTINF+=("$extinf")
-              GH_URLS+=("$urls")
-            done
-          else
-            echo "⚠️ gh-pages ব্যর্থ, লোকাল চ্যানেল ছাড়া চলবে"
-            GH_AVAILABLE=false
-            echo "#EXTM3U" > "header.txt"
-            echo "# 👉 gh-pages unavailable" >> "header.txt"
-            GH_EXTINF=()
-            GH_URLS=()
-          fi
-          
-          SOURCE_OUTPUT="source_output.txt"
-          > "$SOURCE_OUTPUT"
-          for idx in "${!SOURCE_URLS[@]}"; do
-            url="${SOURCE_URLS[$idx]}"
-            grp="${SOURCE_GROUPS[$idx]}"
-            echo "🟢 প্রসেসিং সোর্স $((idx+1)): $grp"
-            if process_source "$url" "$grp" > "tmp_source_$idx.out" 2>/dev/null; then
-              echo "# 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴" >> "$SOURCE_OUTPUT"
-              echo "" >> "$SOURCE_OUTPUT"
-              echo "# 🟢 $grp 🟢" >> "$SOURCE_OUTPUT"
-              echo "" >> "$SOURCE_OUTPUT"
-              cat "tmp_source_$idx.out" >> "$SOURCE_OUTPUT"
-              echo "" >> "$SOURCE_OUTPUT"
-              echo "# 🆕 $grp 👉 Updateded ✅" >> "$SOURCE_OUTPUT"
-              echo "" >> "$SOURCE_OUTPUT"
-              echo "" >> "$SOURCE_OUTPUT"
-            else
-              echo "# 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴" >> "$SOURCE_OUTPUT"
-              echo "" >> "$SOURCE_OUTPUT"
-              echo "# 🟢 $grp 🟢" >> "$SOURCE_OUTPUT"
-              echo "" >> "$SOURCE_OUTPUT"
-              echo "# 🟤🟤🟤🟤🟤🟤🟤🟤🟤🟤 🟤NOT FOUND ANY CHANNELS🟤🟤🟤🟤🟤🟤🟤🟤🟤🟤 🟤" >> "$SOURCE_OUTPUT"
-              echo "" >> "$SOURCE_OUTPUT"
-              echo "# 🆕 $grp 👉 Updateded ✅" >> "$SOURCE_OUTPUT"
-              echo "" >> "$SOURCE_OUTPUT"
-              echo "" >> "$SOURCE_OUTPUT"
-            fi
-          done
-          
-          LOCAL_OUTPUT="local_output.txt"
-          > "$LOCAL_OUTPUT"
-          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S")
-          if [[ "$GH_AVAILABLE" == true ]]; then
-            MAPPING_FILE="$WORK_DIR/mapping_merged.m3u"
-            > "$MAPPING_FILE"
-            for map_url in "${MAPPING_URLS[@]}"; do
-              echo "📥 ম্যাপিং সোর্স: $map_url"
-              tmp_map="$WORK_DIR/map_$$.m3u"
-              if download "$map_url" "$tmp_map"; then
-                cat "$tmp_map" >> "$MAPPING_FILE"
-              else
-                echo "⚠️ ম্যাপিং সোর্স ডাউনলোড ব্যর্থ: $map_url"
-              fi
-            done
-            declare -A MAPPING_CHANNELS
-            while IFS= read -r blk; do
-              extinf=$(head -n1 "$blk")
-              ch_name=$(echo "$extinf" | sed -n 's/.*,\(.*\)$/\1/p' | tr '[:upper:]' '[:lower:]')
-              [[ -z "$ch_name" ]] && continue
-              urls=$(grep -E '^https?://' "$blk" | tr '\n' '|')
-              if [[ -n "${MAPPING_CHANNELS[$ch_name]-}" ]]; then
-                MAPPING_CHANNELS[$ch_name]="${MAPPING_CHANNELS[$ch_name]}|$urls"
-              else
-                MAPPING_CHANNELS[$ch_name]="$urls"
-              fi
-            done < <(split_blocks "$MAPPING_FILE" "map")
-            for i in "${!GH_EXTINF[@]}"; do
-              extinf="${GH_EXTINF[$i]}"
-              old_urls_str="${GH_URLS[$i]}"
-              IFS='|' read -ra old_urls <<< "$old_urls_str"
-              channel_name_full=$(echo "$extinf" | sed -n 's/.*,\(.*\)$/\1/p')
-              keywords=""
-              for key in "${!CHANNEL_MAP[@]}"; do
-                if [[ "$channel_name_full" == "$key" ]]; then
-                  keywords="${CHANNEL_MAP[$key]}"
-                  break
-                fi
-              done
-              new_links=()
-              if [[ -n "$keywords" ]]; then
-                IFS='|' read -ra kw_array <<< "$keywords"
-                for kw in "${kw_array[@]}"; do
-                  kw_lower=$(echo "$kw" | tr '[:upper:]' '[:lower:]')
-                  for map_ch in "${!MAPPING_CHANNELS[@]}"; do
-                    if [[ "$map_ch" == *"$kw_lower"* ]]; then
-                      IFS='|' read -ra map_urls <<< "${MAPPING_CHANNELS[$map_ch]}"
-                      for link in "${map_urls[@]}"; do
-                        new_links+=("$link")
-                      done
-                    fi
-                  done
-                done
-              fi
-              final_new=()
-              skipped=()
-              for link in "${new_links[@]}"; do
-                dup=0
-                for old in "${old_urls[@]}"; do
-                  [[ "$link" == "$old" ]] && { dup=1; break; }
-                done
-                if [[ $dup -eq 1 ]]; then
-                  skipped+=("$link")
-                else
-                  final_new+=("$link")
-                fi
-              done
-              if [[ ${#final_new[@]} -eq 0 && ${#skipped[@]} -gt 0 ]]; then
-                echo "#AUTO-UPDATED - $channel_name_full ⛔ SKIPPED ⛔ - $TIMESTAMP 🟡 - 🔄 - 🔴" >> "$LOCAL_OUTPUT"
-                for s in "${skipped[@]}"; do echo "#🔴 Duplicate Link Found 🔴 $s" >> "$LOCAL_OUTPUT"; done
-              elif [[ ${#final_new[@]} -gt 0 ]]; then
-                echo "#AUTO-UPDATED - $channel_name_full ✅- $TIMESTAMP 🟡 - 🔄 - 🔴" >> "$LOCAL_OUTPUT"
-                for ln in "${final_new[@]}"; do echo "$ln" >> "$LOCAL_OUTPUT"; done
-                for old in "${old_urls[@]}"; do echo "$old" >> "$LOCAL_OUTPUT"; done
-                for s in "${skipped[@]}"; do echo "#🔴 Duplicate Link Found 🔴 $s" >> "$LOCAL_OUTPUT"; done
-              else
-                echo "$extinf" >> "$LOCAL_OUTPUT"
-                for old in "${old_urls[@]}"; do echo "$old" >> "$LOCAL_OUTPUT"; done
-              fi
-              echo "" >> "$LOCAL_OUTPUT"
-              echo "" >> "$LOCAL_OUTPUT"
-            done
-          else
-            echo "⚠️ gh-pages উপলব্ধ নয়, লোকাল চ্যানেল ব্লক খালি" >> "$LOCAL_OUTPUT"
-          fi
-          
-          FINAL_PLAYLIST="$WORK_DIR/$TARGET_FILE"
-          > "$FINAL_PLAYLIST"
-          cat "header.txt" >> "$FINAL_PLAYLIST"
-          echo "" >> "$FINAL_PLAYLIST"
-          cat "$SOURCE_OUTPUT" >> "$FINAL_PLAYLIST"
-          echo "# 🟡🟡🟡🟡🟡🟡🟡🟡🟡 Local Channel Updated  🟡🟡🟡🟡🟡🟡🟡🟡🟡" >> "$FINAL_PLAYLIST"
-          echo "" >> "$FINAL_PLAYLIST"
-          cat "$LOCAL_OUTPUT" >> "$FINAL_PLAYLIST"
-          echo "✅ প্লেলিস্ট তৈরি সম্পন্ন"
-          
-          echo "📤 পুশ করা হচ্ছে $TARGET_REPO এ..."
-          git clone "https://x-access-token:$PAT_TOKEN@github.com/$TARGET_REPO.git" "$WORK_DIR/repo_clone"
-          cd "$WORK_DIR/repo_clone"
-          git checkout "$TARGET_BRANCH"
-          cp "$FINAL_PLAYLIST" "$TARGET_FILE"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            COMMIT_MSG="🆗 Live Event Sports : 🆕 Start Done ✅ - $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          elif [[ "$FIRST_RUN" == "true" ]]; then
-            COMMIT_MSG="🆗 Live Event Sports : 🆕 Start 🆕 - $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          else
-            COMMIT_MSG="🆗 Live Event Sports : 🔄 Updated Done ✅ - $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          fi
-          
-          git add "$TARGET_FILE"
-          if ! git diff --staged --quiet; then
-            git commit -m "$COMMIT_MSG"
-            git push origin "$TARGET_BRANCH"
-            echo "✅ সফলভাবে পুশ করা হয়েছে"
-          else
-            echo "ℹ️ কোনো পরিবর্তন নেই"
-          fi
+        run: python3 - << 'EOF'
+import os
+import re
+import requests
+import sys
+from datetime import datetime
+from collections import OrderedDict
+
+# ------------------------------------------------------------
+# কনফিগারেশন
+# ------------------------------------------------------------
+GH_PAGES_URL = "https://raw.githubusercontent.com/buzzinguaecn/Pizza/gh-pages/LiveEventSports.m3u"
+TARGET_REPO = "buzzinguaecn/Pizza"
+TARGET_BRANCH = "main"
+TARGET_FILE = "LiveEventSports.m3u"
+
+SOURCE_URLS = [
+    "https://raw.githubusercontent.com/srhady/tapmad-bd/refs/heads/main/tapmad_bd.m3u",
+    "https://raw.githubusercontent.com/srhady/bingstream/refs/heads/main/playlist.m3u",
+    "https://raw.githubusercontent.com/srhady/SonyLiv/refs/heads/main/sonyliv_playlist.m3u",
+    "https://raw.githubusercontent.com/srhady/axsports/main/playlist.m3u",
+    "https://raw.githubusercontent.com/srhady/Fancode-bd/main/main_playlist.m3u",
+]
+SOURCE_GROUPS = [
+    "SAWARID سواريد - Tampad",
+    "SAWARID سواريد - BingStream",
+    "SAWARID سواريد - SonyLiv",
+    "SAWARID سواريد - Axsports",
+    "SAWARID سواريد - Fancode",
+]
+
+MAPPING_URLS = [
+    "https://raw.githubusercontent.com/buzzinguaecn/Pizza/main/Pakistan-All-Urdu-All-Farsi.m3u",
+    "https://raw.githubusercontent.com/buzzinguaecn/Pizza/main/All-TV.m3u",
+]
+
+CHANNEL_MAP = {
+    "BTV National": ["BTV NATIONAL HD", "BTV World", "BTV"],
+    "BTV CTG": ["BTV CTG"],
+    "Somoy TV": ["Somoy News TV", "Somoy TV"],
+    "Jamuna TV": ["Jamuna TV", "JAMUNA TV", "Jamuna"],
+    "Ekushey TV": ["Ekushey TV"],
+    "NTV BD": ["NTV"],
+    "NTV-Europe": ["NTV Europe"],
+    "Channel 24": ["Channel 24"],
+    "Deen TV": ["Deen TV"],
+    "SATV": ["SA TV"],
+    "GTV": ["Gazi TV"],
+}
+
+# ------------------------------------------------------------
+# ইউটিলিটি ফাংশন
+# ------------------------------------------------------------
+def download(url):
+    try:
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        return r.text
+    except Exception as e:
+        print(f"❌ ডাউনলোড ব্যর্থ {url}: {e}", file=sys.stderr)
+        return None
+
+def split_blocks(content):
+    """প্লেলিস্টকে ব্লকে ভাগ করে (প্রতি ব্লক: EXTINF থেকে পরবর্তী EXTINF বা EOF পর্যন্ত সব লাইন)"""
+    lines = content.splitlines()
+    blocks = []
+    current_block = []
+    for line in lines:
+        if line.startswith("#EXTINF"):
+            if current_block:
+                blocks.append("\n".join(current_block))
+                current_block = []
+        current_block.append(line)
+    if current_block:
+        blocks.append("\n".join(current_block))
+    return blocks
+
+def fix_group_title(block, new_group):
+    """ব্লকের প্রথম লাইনে group-title পরিবর্তন করে"""
+    lines = block.splitlines()
+    if lines:
+        lines[0] = re.sub(r'group-title="[^"]*"', f'group-title="{new_group}"', lines[0])
+    return "\n".join(lines)
+
+def is_football_cricket(block):
+    """ব্লকে ফুটবল/ক্রিকেট কীওয়ার্ড আছে কিনা"""
+    return bool(re.search(r'(football|soccer|ফুটবল|cricket|ক্রিকেট)', block, re.IGNORECASE))
+
+def process_source(url, group):
+    """একটি সোর্স প্লেলিস্ট প্রক্রিয়া করে আউটপুট ব্লকগুলোর তালিকা ফেরত দেয়"""
+    content = download(url)
+    if not content:
+        return None
+    blocks = split_blocks(content)
+    if not blocks:
+        return None
+    # group-title ঠিক করা
+    fixed_blocks = [fix_group_title(blk, group) for blk in blocks]
+    # ফুটবল/ক্রিকেট আলাদা
+    football = [blk for blk in fixed_blocks if is_football_cricket(blk)]
+    others = [blk for blk in fixed_blocks if not is_football_cricket(blk)]
+    return football + others   # প্রথমে ফুটবল/ক্রিকেট
+
+def extract_channel_name(extinf_line):
+    """EXTINF লাইন থেকে চ্যানেলের নাম বের করে"""
+    match = re.search(r',([^,]+)$', extinf_line)
+    return match.group(1).strip() if match else ""
+
+def extract_urls(block):
+    """ব্লক থেকে সব URL লাইন (http:// বা https:// দিয়ে শুরু) বের করে"""
+    lines = block.splitlines()
+    urls = [line for line in lines if line.startswith(('http://', 'https://'))]
+    return urls
+
+def extract_first_extinf(block):
+    """ব্লকের প্রথম লাইন (EXTINF) ফেরত দেয়"""
+    return block.splitlines()[0]
+
+# ------------------------------------------------------------
+# 1. gh-pages প্লেলিস্ট প্রক্রিয়া
+# ------------------------------------------------------------
+print("📥 gh-pages ডাউনলোড...")
+gh_content = download(GH_PAGES_URL)
+if not gh_content:
+    print("⚠️ gh-pages ডাউনলোড ব্যর্থ, লোকাল চ্যানেল ছাড়া চলবে")
+    header = "#EXTM3U\n# 👉 gh-pages unavailable\n"
+    gh_blocks = []
+else:
+    lines = gh_content.splitlines()
+    header_lines = []
+    for line in lines:
+        if line.startswith("#EXTINF"):
+            break
+        header_lines.append(line)
+    header = "\n".join(header_lines)
+    gh_blocks = split_blocks(gh_content)
+
+gh_extinf_list = []
+gh_urls_list = []
+for blk in gh_blocks:
+    extinf = extract_first_extinf(blk)
+    urls = extract_urls(blk)
+    gh_extinf_list.append(extinf)
+    gh_urls_list.append(urls)
+
+# ------------------------------------------------------------
+# 2. সোর্স প্লেলিস্ট প্রক্রিয়া করে আউটপুট তৈরি
+# ------------------------------------------------------------
+source_output_lines = []
+for idx, (url, grp) in enumerate(zip(SOURCE_URLS, SOURCE_GROUPS)):
+    print(f"🟢 প্রসেসিং সোর্স {idx+1}: {grp}")
+    processed = process_source(url, grp)
+    source_output_lines.append("# 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴")
+    source_output_lines.append("")
+    source_output_lines.append(f"# 🟢 {grp} 🟢")
+    source_output_lines.append("")
+    if processed is None:
+        source_output_lines.append("# 🟤🟤🟤🟤🟤🟤🟤🟤🟤🟤 🟤NOT FOUND ANY CHANNELS🟤🟤🟤🟤🟤🟤🟤🟤🟤🟤 🟤")
+    else:
+        for blk in processed:
+            source_output_lines.append(blk)
+            source_output_lines.append("")   # এক ফাঁকা লাইন
+            source_output_lines.append("")   # দুই ফাঁকা লাইন (নির্দেশ অনুযায়ী)
+    source_output_lines.append("")
+    source_output_lines.append(f"# 🆕 {grp} 👉 Updateded ✅")
+    source_output_lines.append("")
+    source_output_lines.append("")
+
+# ------------------------------------------------------------
+# 3. ম্যাপিং ও লোকাল চ্যানেল আপডেট
+# ------------------------------------------------------------
+local_output_lines = []
+timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+if gh_blocks:
+    # ম্যাপিং সোর্স একত্রিত
+    mapping_content = ""
+    for map_url in MAPPING_URLS:
+        print(f"📥 ম্যাপিং সোর্স: {map_url}")
+        cont = download(map_url)
+        if cont:
+            mapping_content += cont + "\n"
+    # ম্যাপিং ব্লক থেকে নাম ও URL ডিকশনারি
+    map_blocks = split_blocks(mapping_content) if mapping_content else []
+    mapping_dict = {}
+    for blk in map_blocks:
+        extinf = extract_first_extinf(blk)
+        ch_name = extract_channel_name(extinf).lower()
+        if not ch_name:
+            continue
+        urls = extract_urls(blk)
+        if ch_name in mapping_dict:
+            mapping_dict[ch_name].extend(urls)
+        else:
+            mapping_dict[ch_name] = urls
+
+    # প্রতিটি gh-pages চ্যানেলের জন্য ম্যাপিং
+    for extinf, old_urls in zip(gh_extinf_list, gh_urls_list):
+        ch_name_full = extract_channel_name(extinf)
+        # কীওয়ার্ড খোঁজ (case-sensitive exact match)
+        keywords = CHANNEL_MAP.get(ch_name_full, [])
+        new_links = []
+        if keywords:
+            for kw in keywords:
+                kw_lower = kw.lower()
+                for map_ch, map_links in mapping_dict.items():
+                    if kw_lower in map_ch:
+                        new_links.extend(map_links)
+        # ডুপ্লিকেট চেক
+        final_new = []
+        skipped = []
+        for link in new_links:
+            if link in old_urls:
+                skipped.append(link)
+            else:
+                final_new.append(link)
+        # আউটপুট ব্লক তৈরি
+        if not final_new and skipped:
+            local_output_lines.append(f"#AUTO-UPDATED - {ch_name_full} ⛔ SKIPPED ⛔ - {timestamp} 🟡 - 🔄 - 🔴")
+            for s in skipped:
+                local_output_lines.append(f"#🔴 Duplicate Link Found 🔴 {s}")
+        elif final_new:
+            local_output_lines.append(f"#AUTO-UPDATED - {ch_name_full} ✅- {timestamp} 🟡 - 🔄 - 🔴")
+            for ln in final_new:
+                local_output_lines.append(ln)
+            for old in old_urls:
+                local_output_lines.append(old)
+            for s in skipped:
+                local_output_lines.append(f"#🔴 Duplicate Link Found 🔴 {s}")
+        else:
+            local_output_lines.append(extinf)
+            for old in old_urls:
+                local_output_lines.append(old)
+        local_output_lines.append("")
+        local_output_lines.append("")
+else:
+    local_output_lines.append("⚠️ gh-pages উপলব্ধ নয়, লোকাল চ্যানেল ব্লক খালি")
+
+# ------------------------------------------------------------
+# 4. ফাইনাল প্লেলিস্ট তৈরি
+# ------------------------------------------------------------
+final_playlist_lines = []
+final_playlist_lines.append(header)
+final_playlist_lines.append("")
+final_playlist_lines.extend(source_output_lines)
+final_playlist_lines.append("# 🟡🟡🟡🟡🟡🟡🟡🟡🟡 Local Channel Updated  🟡🟡🟡🟡🟡🟡🟡🟡🟡")
+final_playlist_lines.append("")
+final_playlist_lines.extend(local_output_lines)
+
+final_content = "\n".join(final_playlist_lines)
+print("✅ প্লেলিস্ট তৈরি সম্পন্ন")
+
+# ------------------------------------------------------------
+# 5. গিটহাবে পুশ (API ব্যবহার করে)
+# ------------------------------------------------------------
+token = os.environ.get("PAT_TOKEN")
+if not token:
+    print("❌ PAT_TOKEN সেট করা নেই", file=sys.stderr)
+    sys.exit(1)
+
+url = f"https://api.github.com/repos/{TARGET_REPO}/contents/{TARGET_FILE}"
+headers = {
+    "Authorization": f"Bearer {token}",
+    "Accept": "application/vnd.github.v3+json"
+}
+# বর্তমান ফাইলের SHA পাওয়া
+resp = requests.get(url, headers=headers)
+sha = resp.json().get("sha") if resp.status_code == 200 else None
+
+import base64
+encoded = base64.b64encode(final_content.encode()).decode()
+data = {
+    "message": f"Auto-update playlist {datetime.utcnow().isoformat()}",
+    "content": encoded,
+    "branch": TARGET_BRANCH
+}
+if sha:
+    data["sha"] = sha
+
+resp = requests.put(url, headers=headers, json=data)
+if resp.status_code in (200, 201):
+    print("✅ সফলভাবে পুশ করা হয়েছে")
+else:
+    print(f"❌ পুশ ব্যর্থ: {resp.status_code} - {resp.text}", file=sys.stderr)
+    sys.exit(1)
+EOF
