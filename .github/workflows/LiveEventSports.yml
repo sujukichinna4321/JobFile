@@ -32,9 +32,9 @@ jobs:
 
           # Configurations
           SOURCE_PLAYLISTS = [
+              {"url": "https://raw.githubusercontent.com/srhady/SonyLiv/refs/heads/main/sonyliv_playlist.m3u", "title": "SAWARID سواريد - SonyLiv"},
               {"url": "https://raw.githubusercontent.com/srhady/tapmad-bd/refs/heads/main/tapmad_bd.m3u", "title": "SAWARID سواريد - Tampad"},
               {"url": "https://raw.githubusercontent.com/srhady/bingstream/refs/heads/main/playlist.m3u", "title": "SAWARID سواريد - BingStream"},
-              {"url": "https://raw.githubusercontent.com/srhady/SonyLiv/refs/heads/main/sonyliv_playlist.m3u", "title": "SAWARID سواريد - SonyLiv"},
               {"url": "https://raw.githubusercontent.com/srhady/axsports/main/playlist.m3u", "title": "SAWARID سواريد - Axsports"},
               {"url": "https://raw.githubusercontent.com/srhady/Fancode-bd/main/main_playlist.m3u", "title": "SAWARID سواريد - Fancode"}
           ]
