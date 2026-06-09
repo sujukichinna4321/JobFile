@@ -28,15 +28,16 @@ jobs:
           import os
           import re
           import requests
+          from collections import defaultdict
           from datetime import datetime, timedelta, timezone
 
           # Configurations
           SOURCE_PLAYLISTS = [
-              {"url": "https://raw.githubusercontent.com/srhady/SonyLiv/refs/heads/main/sonyliv_playlist.m3u", "title": "SAWARID سواريد - SonyLiv"},
-              {"url": "https://raw.githubusercontent.com/srhady/tapmad-bd/refs/heads/main/tapmad_bd.m3u", "title": "SAWARID سواريد - Tampad"},
-              {"url": "https://raw.githubusercontent.com/srhady/bingstream/refs/heads/main/playlist.m3u", "title": "SAWARID سواريد - BingStream"},
-              {"url": "https://raw.githubusercontent.com/srhady/axsports/main/playlist.m3u", "title": "SAWARID سواريد - Axsports"},
-              {"url": "https://raw.githubusercontent.com/srhady/Fancode-bd/main/main_playlist.m3u", "title": "SAWARID سواريد - Fancode"}
+              {"url": "https://raw.githubusercontent.com/srhady/tapmad-bd/refs/heads/main/tapmad_bd.m3u"},
+              {"url": "https://raw.githubusercontent.com/srhady/bingstream/refs/heads/main/playlist.m3u"},
+              {"url": "https://raw.githubusercontent.com/srhady/SonyLiv/refs/heads/main/sonyliv_playlist.m3u"},
+              {"url": "https://raw.githubusercontent.com/srhady/axsports/main/playlist.m3u"},
+              {"url": "https://raw.githubusercontent.com/srhady/Fancode-bd/main/main_playlist.m3u"}
           ]
 
           MAPPING_PLAYLISTS = [
@@ -47,7 +48,7 @@ jobs:
           LOCAL_SOURCE_URL = "https://raw.githubusercontent.com/buzzinguaecn/Pizza/gh-pages/LiveEventSports.m3u"
 
           CHANNEL_MAPPING = {
-              "T Sports": ["T Sports", "T Sports HD", "TSports"],
+              "BTV National": ["BTV NATIONAL HD", "BTV World"],
               "BTV CTG": ["BTV CTG"],
               "Somoy TV": ["Somoy News TV", "Somoy TV"],
               "Jamuna TV": ["Jamuna TV", "JAMUNA TV", "Jamuna"],
@@ -100,41 +101,30 @@ jobs:
                       urls.append(line_strip)
               return {'extinf': extinf_line, 'group': group, 'name': name, 'urls': urls}
 
-          def process_source_playlist(url, new_title):
-              try:
-                  r = requests.get(url, timeout=15)
-                  if r.status_code != 200:
-                      return None
-                  content = r.text
-              except Exception:
-                  return None
+          def get_normalized_group(original_group):
+              og_clean = original_group.strip()
+              if not og_clean:
+                  return "SAWARID سواريد - Sports"
               
-              blocks = parse_blocks(content)
-              if not blocks:
-                  return []
+              og_lower = og_clean.lower()
+              if "football" in og_lower:
+                  return "SAWARID سواريد - Football"
+              elif "cricket" in og_lower:
+                  return "SAWARID سواريد - Cricket"
               
-              processed_blocks = []
-              for b in blocks:
-                  info = get_block_info(b)
-                  extinf = info['extinf']
-                  if 'group-title="' in extinf:
-                      extinf = re.sub(r'group-title="[^"]*"', f'group-title="{new_title}"', extinf)
-                  else:
-                      comma_idx = extinf.rfind(',')
-                      if comma_idx != -1:
-                          extinf = extinf[:comma_idx] + f' group-title="{new_title}"' + extinf[comma_idx:]
-                  
-                  new_lines = [extinf] + b[1:]
-                  search_text = (info['group'] + " " + info['name'] + " " + extinf).lower()
-                  is_sport = "football" in search_text or "cricket" in search_text
-                  
-                  processed_blocks.append({
-                      'is_sport': is_sport,
-                      'lines': new_lines
-                  })
-              
-              processed_blocks.sort(key=lambda x: x['is_sport'], reverse=True)
-              return [pb['lines'] for pb in processed_blocks]
+              # অন্যান্য গ্রুপের জন্য প্রথম অক্ষর ক্যাপিটাল করে প্রিপেন্ড করা
+              parts = og_clean.split()
+              capitalized_group = " ".join([p.capitalize() for p in parts])
+              return f"SAWARID سواريد - {capitalized_group}"
+
+          def group_sort_key(group_name):
+              g_lower = group_name.lower()
+              if "football" in g_lower:
+                  return (0, group_name)
+              elif "cricket" in g_lower:
+                  return (1, group_name)
+              else:
+                  return (2, group_name)
 
           # Setup local and destination repository
           pat_token = os.getenv("PAT_TOKEN")
@@ -179,7 +169,41 @@ jobs:
                                   collected_urls.append(u)
               return collected_urls
 
-          # 2. Parse Local gh-pages playlist
+          # 2. Parse all Source Playlists channels and Group them
+          all_source_channels = []
+          for sp in SOURCE_PLAYLISTS:
+              try:
+                  r = requests.get(sp['url'], timeout=15)
+                  if r.status_code == 200:
+                      blocks = parse_blocks(r.text)
+                      for b in blocks:
+                          info = get_block_info(b)
+                          new_group = get_normalized_group(info['group'])
+                          
+                          # Update group-title in extinf line
+                          extinf = info['extinf']
+                          if 'group-title="' in extinf:
+                              extinf = re.sub(r'group-title="[^"]*"', f'group-title="{new_group}"', extinf)
+                          else:
+                              comma_idx = extinf.rfind(',')
+                              if comma_idx != -1:
+                                  extinf = extinf[:comma_idx] + f' group-title="{new_group}"' + extinf[comma_idx:]
+                          
+                          updated_lines = [extinf] + b[1:]
+                          all_source_channels.append({
+                              'group': new_group,
+                              'lines': updated_lines
+                          })
+              except Exception as e:
+                  print(f"Error loading source playlist {sp['url']}: {e}")
+
+          grouped_source_data = defaultdict(list)
+          for ch in all_source_channels:
+              grouped_source_data[ch['group']].append(ch['lines'])
+
+          sorted_groups = sorted(grouped_source_data.keys(), key=group_sort_key)
+
+          # 3. Parse Local gh-pages playlist
           try:
               r = requests.get(LOCAL_SOURCE_URL, timeout=15)
               local_content = r.text
@@ -253,27 +277,25 @@ jobs:
               
               local_processed_blocks.append("\n".join([l for l in new_block_lines if l.strip()]))
 
-          # 3. Compile output content
+          # 4. Compile output content
           content_parts = []
           source_parts = []
-          for sp in SOURCE_PLAYLISTS:
-              sp_content = []
-              sp_content.append("# 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴")
-              sp_content.append(f"# 🟢 {sp['title']} 🟢")
+          for g_name in sorted_groups:
+              g_content = []
+              g_content.append("# 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴")
+              g_content.append(f"# 🟢🟢🟢🟢🟢🟢 {g_name} 🟢🟢🟢🟢🟢🟢")
               
-              blocks = process_source_playlist(sp['url'], sp['title'])
-              if blocks is None or len(blocks) == 0:
-                  sp_content.append("# 🟤🟤🟤🟤🟤🟤🟤🟤🟤🟤 🟤NOT FOUND ANY CHANNELS🟤🟤🟤🟤🟤🟤🟤🟤🟤🟤 🟤")
-              else:
-                  block_strings = []
-                  for b in blocks:
-                      block_strings.append("\n".join([line for line in b if line.strip()]))
-                  sp_content.append("\n\n\n".join(block_strings))
+              block_strings = []
+              for b in grouped_source_data[g_name]:
+                  block_strings.append("\n".join([line for line in b if line.strip()]))
+              g_content.append("\n\n\n".join(block_strings))
               
-              sp_content.append(f"# 🆕 {sp['title']} 👉 Updateded ✅")
-              source_parts.append("\n\n\n".join(sp_content))
+              g_content.append(f"# 🆕 {g_name} 👉 Updateded Done ✅✅✅✅✅✅")
+              source_parts.append("\n\n\n".join(g_content))
 
-          content_parts.append("\n\n\n".join(source_parts))
+          if source_parts:
+              content_parts.append("\n\n\n".join(source_parts))
+          
           content_parts.append("# 🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡 Local Channel Updated  🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡")
           content_parts.append("\n\n\n".join(local_processed_blocks))
 
