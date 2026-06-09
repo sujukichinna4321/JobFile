@@ -2,9 +2,8 @@ name: Update LiveEventSports Playlist
 
 on:
   schedule:
-    # প্রতি ৫ মিনিট অন্তর (GitHub সীমাবদ্ধতা থাকতে পারে তবে এটি সর্বনিম্ন)
     - cron: '*/5 * * * *'
-  workflow_dispatch:   # ম্যানুয়াল রানের অনুমতি
+  workflow_dispatch:
 
 jobs:
   update:
@@ -32,6 +31,8 @@ jobs:
           FIRST_RUN: ${{ github.event_name == 'schedule' && github.run_number == 1 }}
         run: |
           set -euo pipefail
+          # অস্থায়ীভাবে unbound variable চেক বন্ধ (অ্যাসোসিয়েটিভ অ্যারের জন্য)
+          set +u
 
           # ------------------------------------------------------------
           # কনফিগারেশন ভেরিয়েবল
@@ -94,31 +95,26 @@ jobs:
 
           # ------------------------------------------------------------
           # ফাংশন: প্লেলিস্ট থেকে চ্যানেল ব্লক বের করা (EXTINF+URLs)
-          # আউটপুট: প্রতিটি ব্লক "EXTINF_LINE|URL1|URL2|..." আকারে
+          # আউটপুট: প্রতিটি ব্লক "EXTINF_LINE|URL1|URL2|..." আকারে (পাইপ সেপারেটেড)
           # ------------------------------------------------------------
           parse_playlist() {
             local input_file="$1"
-            local mode="header"
             local extinf_line=""
             local urls=()
             while IFS= read -r line || [ -n "$line" ]; do
-              # খালি লাইন স্কিপ
               [ -z "$line" ] && continue
               if [[ "$line" == \#EXTINF* ]]; then
-                # আগের ব্লক সেভ করুন
                 if [ -n "$extinf_line" ]; then
-                  echo "$extinf_line|${urls[*]}"
+                  printf "%s|%s\n" "$extinf_line" "$(IFS='|'; echo "${urls[*]}")"
                 fi
                 extinf_line="$line"
                 urls=()
               elif [[ "$line" != \#* && -n "$line" ]]; then
-                # URL লাইন (কমেন্টেড না)
                 urls+=("$line")
               fi
             done < "$input_file"
-            # শেষ ব্লক
             if [ -n "$extinf_line" ]; then
-              echo "$extinf_line|${urls[*]}"
+              printf "%s|%s\n" "$extinf_line" "$(IFS='|'; echo "${urls[*]}")"
             fi
           }
 
@@ -140,7 +136,7 @@ jobs:
           # ------------------------------------------------------------
           get_channel_name() {
             local extinf="$1"
-            echo "$extinf" | grep -oP ',\K[^,]+$' || echo ""
+            echo "$extinf" | sed -n 's/.*,\(.*\)$/\1/p'
           }
 
           # ------------------------------------------------------------
@@ -148,23 +144,18 @@ jobs:
           # ------------------------------------------------------------
           echo "📥 gh-pages প্লেলিস্ট ডাউনলোড হচ্ছে..."
           download_file "$GH_PAGES_URL" "gh_pages.m3u" || exit 1
-
-          # হেডার লাইন সংগ্রহ (প্রথম #EXTINF পর্যন্ত)
           awk '/^#EXTINF/{exit} {print}' "gh_pages.m3u" > "header.txt"
-          
-          # চ্যানেল ব্লক gh_pages থেকে
           parse_playlist "gh_pages.m3u" > "gh_channels_raw.txt"
           
-          # gh_channels ফরম্যাট: EXTINF|URL1 URL2 ...
-          declare -a GH_EXTINF=()
-          declare -a GH_URLS=()
+          GH_EXTINF=()
+          GH_URLS=()
           while IFS='|' read -r extinf urls; do
             GH_EXTINF+=("$extinf")
             GH_URLS+=("$urls")
           done < "gh_channels_raw.txt"
 
           # ------------------------------------------------------------
-          # 2. সোর্স প্লেলিস্ট প্রক্রিয়া (শুধু চ্যানেল ব্লক, group-title পরিবর্তন করে)
+          # 2. সোর্স প্লেলিস্ট প্রক্রিয়া
           # ------------------------------------------------------------
           SOURCE_OUTPUT="source_blocks.txt"
           > "$SOURCE_OUTPUT"
@@ -176,37 +167,32 @@ jobs:
             tmp_file="$WORK_DIR/source_$idx.m3u"
             download_file "$url" "$tmp_file" || continue
             
-            # শুরু কমেন্ট
             echo "# 🟢 $group 🟢" >> "$SOURCE_OUTPUT"
             echo "" >> "$SOURCE_OUTPUT"
             
-            # প্রতিটি ব্লক পার্স করে group-title পরিবর্তন
             while IFS='|' read -r extinf urls; do
               new_extinf=$(set_group_title "$extinf" "$group")
               echo "$new_extinf" >> "$SOURCE_OUTPUT"
-              # URL গুলো আলাদা লাইনে
-              for link in $urls; do
+              IFS='|' read -ra url_array <<< "$urls"
+              for link in "${url_array[@]}"; do
                 [ -n "$link" ] && echo "$link" >> "$SOURCE_OUTPUT"
               done
               echo "" >> "$SOURCE_OUTPUT"
-              echo "" >> "$SOURCE_OUTPUT"   # দুটি ফাঁকা লাইন
+              echo "" >> "$SOURCE_OUTPUT"
             done < <(parse_playlist "$tmp_file")
             
-            # শেষ কমেন্ট
             echo "# 🆕 $group 👉 Updateded ✅" >> "$SOURCE_OUTPUT"
             echo "" >> "$SOURCE_OUTPUT"
             echo "" >> "$SOURCE_OUTPUT"
           done
 
           # ------------------------------------------------------------
-          # 3. লোকাল চ্যানেল (gh-pages) এর জন্য ম্যাপিং & আপডেট
+          # 3. লোকাল চ্যানেলের জন্য ম্যাপিং
           # ------------------------------------------------------------
           LOCAL_OUTPUT="local_blocks.txt"
           > "$LOCAL_OUTPUT"
-          
           TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S")
           
-          # প্রথমে সব ম্যাপিং সোর্স ডাউনলোড করে একত্রিত করি (URL থেকে চ্যানেল ব্লক)
           MAPPING_FILE="$WORK_DIR/mapping_merged.m3u"
           > "$MAPPING_FILE"
           for map_url in "${MAPPING_URLS[@]}"; do
@@ -215,28 +201,23 @@ jobs:
             download_file "$map_url" "$tmp_map" && cat "$tmp_map" >> "$MAPPING_FILE"
           done
           
-          # ম্যাপিং ফাইল থেকে সমস্ত চ্যানেল ব্লক পার্স
-          declare -A MAPPING_CHANNELS   # কী: চ্যানেল নাম (লোয়ারকেস), মান: URL লিস্ট (স্পেস সেপারেটেড)
+          declare -A MAPPING_CHANNELS
           while IFS='|' read -r extinf urls; do
             ch_name=$(get_channel_name "$extinf" | tr '[:upper:]' '[:lower:]')
-            # যদি কী বিদ্যমান থাকে তাহলে URLs যোগ
-            if [ -n "${MAPPING_CHANNELS[$ch_name]}" ]; then
-              MAPPING_CHANNELS[$ch_name]="${MAPPING_CHANNELS[$ch_name]} $urls"
+            [ -z "$ch_name" ] && continue
+            if [ -n "${MAPPING_CHANNELS[$ch_name]-}" ]; then
+              MAPPING_CHANNELS[$ch_name]="${MAPPING_CHANNELS[$ch_name]}|$urls"
             else
               MAPPING_CHANNELS[$ch_name]="$urls"
             fi
           done < <(parse_playlist "$MAPPING_FILE")
           
-          # এখন gh-pages এর প্রতিটি চ্যানেলের জন্য
           for i in "${!GH_EXTINF[@]}"; do
             extinf="${GH_EXTINF[$i]}"
             old_urls_str="${GH_URLS[$i]}"
-            # পুরাতন URL গুলো অ্যারেতে নিই (স্পেস সেপারেটেড)
-            IFS=' ' read -ra old_urls <<< "$old_urls_str"
+            IFS='|' read -ra old_urls <<< "$old_urls_str"
             channel_name_full=$(get_channel_name "$extinf")
-            channel_name_lower=$(echo "$channel_name_full" | tr '[:upper:]' '[:lower:]')
             
-            # ম্যাপিং কীওয়ার্ড খোঁজ
             keywords=""
             for key in "${!CHANNEL_MAP[@]}"; do
               if [[ "$channel_name_full" == "$key" ]]; then
@@ -245,17 +226,15 @@ jobs:
               fi
             done
             
-            # যদি কীওয়ার্ড না পাওয়া যায় তাহলে কোন ম্যাপিং হবে না (শুধু পুরাতন লিংক থাকবে)
             new_links=()
             if [ -n "$keywords" ]; then
               IFS='|' read -ra kw_array <<< "$keywords"
-              # ম্যাপিং চ্যানেলগুলোতে খোঁজ
               for kw in "${kw_array[@]}"; do
                 kw_lower=$(echo "$kw" | tr '[:upper:]' '[:lower:]')
                 for map_ch in "${!MAPPING_CHANNELS[@]}"; do
                   if [[ "$map_ch" == *"$kw_lower"* ]]; then
-                    # URL যোগ
-                    for link in ${MAPPING_CHANNELS[$map_ch]}; do
+                    IFS='|' read -ra map_urls <<< "${MAPPING_CHANNELS[$map_ch]}"
+                    for link in "${map_urls[@]}"; do
                       new_links+=("$link")
                     done
                   fi
@@ -263,7 +242,6 @@ jobs:
               done
             fi
             
-            # ডুপ্লিকেট চেক (নতুন লিংক যেগুলো পুরাতনে নেই)
             final_new_links=()
             skipped_links=()
             for link in "${new_links[@]}"; do
@@ -281,7 +259,6 @@ jobs:
               fi
             done
             
-            # ব্লক তৈরি
             if [ ${#final_new_links[@]} -eq 0 ] && [ ${#skipped_links[@]} -gt 0 ]; then
               echo "#AUTO-UPDATED - $channel_name_full ⛔ SKIPPED ⛔ - $TIMESTAMP 🟡 - 🔄 - 🔴" >> "$LOCAL_OUTPUT"
               for skip in "${skipped_links[@]}"; do
@@ -289,26 +266,21 @@ jobs:
               done
             elif [ ${#final_new_links[@]} -gt 0 ]; then
               echo "#AUTO-UPDATED - $channel_name_full ✅- $TIMESTAMP 🟡 - 🔄 - 🔴" >> "$LOCAL_OUTPUT"
-              # প্রথমে নতুন লিংক
               for link in "${final_new_links[@]}"; do
                 echo "$link" >> "$LOCAL_OUTPUT"
               done
-              # তারপর পুরাতন লিংক (যেগুলো কমেন্টেড সহ থাকবে)
               for old in "${old_urls[@]}"; do
                 echo "$old" >> "$LOCAL_OUTPUT"
               done
-              # স্কিপড লিংক কমেন্ট হিসেবে
               for skip in "${skipped_links[@]}"; do
                 echo "#🔴 Duplicate Link Found 🔴 $skip" >> "$LOCAL_OUTPUT"
               done
             else
-              # কোনো নতুন নাই, ডুপ্লিকেটও নাই -> পুরাতন স্থির
               echo "$extinf" >> "$LOCAL_OUTPUT"
               for old in "${old_urls[@]}"; do
                 echo "$old" >> "$LOCAL_OUTPUT"
               done
             fi
-            # দুটি ফাঁকা লাইন
             echo "" >> "$LOCAL_OUTPUT"
             echo "" >> "$LOCAL_OUTPUT"
           done
@@ -318,19 +290,11 @@ jobs:
           # ------------------------------------------------------------
           FINAL_PLAYLIST="$WORK_DIR/$TARGET_FILE"
           > "$FINAL_PLAYLIST"
-          
-          # হেডার যোগ (প্রথম অংশ)
           cat "header.txt" >> "$FINAL_PLAYLIST"
           echo "" >> "$FINAL_PLAYLIST"
-          
-          # সোর্স ব্লক যোগ
           cat "$SOURCE_OUTPUT" >> "$FINAL_PLAYLIST"
-          
-          # স্পেশাল কমেন্ট
           echo "# 🟡🟡🟡🟡🟡🟡🟡🟡🟡 Local Channel Updated  🟡🟡🟡🟡🟡🟡🟡🟡🟡" >> "$FINAL_PLAYLIST"
           echo "" >> "$FINAL_PLAYLIST"
-          
-          # লোকাল চ্যানেল ব্লক যোগ
           cat "$LOCAL_OUTPUT" >> "$FINAL_PLAYLIST"
           
           echo "✅ প্লেলিস্ট তৈরি সম্পন্ন: $FINAL_PLAYLIST"
@@ -339,18 +303,14 @@ jobs:
           # 5. গিটহাবে পুশ করা
           # ------------------------------------------------------------
           echo "📤 পুশ করা হচ্ছে $TARGET_REPO  এ..."
-          
-          # একটি টেম্প ডিরেক্টরিতে রিপোজিটরি ক্লোন
           CLONE_DIR="$WORK_DIR/repo_clone"
           git clone "https://x-access-token:$PAT_TOKEN@github.com/$TARGET_REPO.git" "$CLONE_DIR"
           cd "$CLONE_DIR"
           git checkout "$TARGET_BRANCH"
-          
           cp "$FINAL_PLAYLIST" "$TARGET_FILE"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # কমিট মেসেজ নির্ধারণ
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             COMMIT_MSG="🆗 Live Event Sports : 🆕 Start Done ✅ - $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           elif [ "$FIRST_RUN" == "true" ]; then
