@@ -23,6 +23,15 @@ jobs:
       - name: Run Update Script
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          SOURCE_TAMPAD: ${{ secrets.SOURCE_TAMPAD }}
+          SOURCE_BINGSTREAM: ${{ secrets.SOURCE_BINGSTREAM }}
+          SOURCE_SONYLIV: ${{ secrets.SOURCE_SONYLIV }}
+          SOURCE_AX: ${{ secrets.SOURCE_AX }}
+          SOURCE_FANCODEBD: ${{ secrets.SOURCE_FANCODEBD }}
+          MAPPING_ALL_TV: ${{ secrets.MAPPING_ALL_TV }}
+          MAPPING_ROARZONE: ${{ secrets.MAPPING_ROARZONE }}
+          MAPPING_AYNA: ${{ secrets.MAPPING_AYNA }}
+          LOCAL_SOURCE_URL: ${{ secrets.LOCAL_SOURCE_URL }}
         run: |
           cat << 'EOF' > update_playlist.py
           import os
@@ -31,34 +40,33 @@ jobs:
           from collections import defaultdict
           from datetime import datetime, timedelta, timezone
 
-          # Configurations
+          # Configurations (Fetched from environment variables)
           SOURCE_PLAYLISTS = [
-              {"url": "https://raw.githubusercontent.com/srhady/tapmad-bd/refs/heads/main/tapmad_bd.m3u"},
-              {"url": "https://raw.githubusercontent.com/srhady/bingstream/refs/heads/main/playlist.m3u"},
-              {"url": "https://raw.githubusercontent.com/srhady/SonyLiv/refs/heads/main/sonyliv_playlist.m3u"},
-              {"url": "https://raw.githubusercontent.com/srhady/axsports/main/playlist.m3u"},
-              {"url": "https://raw.githubusercontent.com/srhady/Fancode-bd/main/main_playlist.m3u"}
+              {"url": os.getenv("SOURCE_TAMPAD", "")},
+              {"url": os.getenv("SOURCE_BINGSTREAM", "")},
+              {"url": os.getenv("SOURCE_SONYLIV", "")},
+              {"url": os.getenv("SOURCE_AX", "")},
+              {"url": os.getenv("SOURCE_FANCODEBD", "")}
           ]
+          # Filter out empty entries if any secret is not set
+          SOURCE_PLAYLISTS = [sp for sp in SOURCE_PLAYLISTS if sp["url"]]
 
           MAPPING_PLAYLISTS = [
-              "https://raw.githubusercontent.com/buzzinguaecn/Pizza/main/Pakistan-All-Urdu-All-Farsi.m3u",
-              "https://raw.githubusercontent.com/buzzinguaecn/Pizza/main/All-TV.m3u"
+              os.getenv("MAPPING_ALL_TV", ""),
+              os.getenv("MAPPING_ROARZONE", ""),
+              os.getenv("MAPPING_AYNA", "")
           ]
+          # Filter out empty entries
+          MAPPING_PLAYLISTS = [mp for mp in MAPPING_PLAYLISTS if mp]
 
-          LOCAL_SOURCE_URL = "https://raw.githubusercontent.com/buzzinguaecn/Pizza/gh-pages/LiveEventSports.m3u"
+          LOCAL_SOURCE_URL = os.getenv("LOCAL_SOURCE_URL", "")
 
           CHANNEL_MAPPING = {
-              "BTV National": ["BTV NATIONAL HD", "BTV World"],
-              "BTV CTG": ["BTV CTG"],
-              "Somoy TV": ["Somoy News TV", "Somoy TV"],
-              "Jamuna TV": ["Jamuna TV", "JAMUNA TV", "Jamuna"],
-              "Ekushey TV": ["Ekushey TV"],
-              "NTV BD": ["NTV"],
-              "NTV-Europe": ["NTV Europe"],
-              "Channel 24": ["Channel 24"],
-              "Deen TV": ["Deen TV"],
-              "SATV": ["SA TV"],
-              "GTV": ["Gazi TV"],
+              "T Sports": ["T Sports", "TSports", "T SPORTS", "T Sports HD"],
+              "TALK SPORT": ["TALK SPORT", "Talk Sports"],
+              "Willow Sports": ["Willow Sports", "Willow", "Willow HD"],
+              "PTV Sports": ["PTV Sports", "P TV Sports", "PTV Sports HD"],
+              "A Sports": ["A Sports", "A Sports HD"],
           }
 
           def parse_blocks(content):
