@@ -42,9 +42,9 @@ jobs:
 
           # Configurations (Fetched from environment variables)
           SOURCE_PLAYLISTS = [
+              {"url": os.getenv("SOURCE_SONYLIV", "")},
               {"url": os.getenv("SOURCE_TAMPAD", "")},
               {"url": os.getenv("SOURCE_BINGSTREAM", "")},
-              {"url": os.getenv("SOURCE_SONYLIV", "")},
               {"url": os.getenv("SOURCE_AX", "")},
               {"url": os.getenv("SOURCE_FANCODEBD", "")}
           ]
