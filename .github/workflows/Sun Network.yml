@@ -54,9 +54,9 @@ jobs:
           os.system(f"git clone https://x-access-token:{pat_token}@github.com/buzzinguaecn/Pizza.git pizza-repo")
 
           lines = content.splitlines()
-          output_lines = ["#EXTM3U"]
+          blocks = []
 
-          # প্লেলিস্টের তথ্যাদি সাজানোর জন্য সাময়িক ভ্যারিয়েবল
+          # সাময়িক ভ্যারিয়েবল
           current_license_type = None
           current_license_key = None
           current_extinf = None
@@ -77,32 +77,37 @@ jobs:
               # EXTINF রিড করা ও গ্রুপ টাইটেল পরিবর্তন
               elif line_str.startswith("#EXTINF:"):
                   extinf = line_str
+                  # গ্রুপ নাম পরিবর্তন করে "SAWARID سواريد - Sun Network" করা
                   if 'group-title="' in extinf:
-                      extinf = re.sub(r'group-title="[^"]*"', 'group-title="SAWARID - Sun Network"', extinf)
+                      extinf = re.sub(r'group-title="[^"]*"', 'group-title="SAWARID سواريد - Sun Network"', extinf)
                   else:
                       comma_idx = extinf.rfind(',')
                       if comma_idx != -1:
-                          extinf = extinf[:comma_idx] + ' group-title="SAWARID - Sun Network"' + extinf[comma_idx:]
+                          extinf = extinf[:comma_idx] + ' group-title="SAWARID سواريد - Sun Network"' + extinf[comma_idx:]
                       else:
-                          extinf = extinf + ' group-title="SAWARID - Sun Network"'
+                          extinf = extinf + ' group-title="SAWARID سواريد - Sun Network"'
                   current_extinf = extinf
               
               # স্ট্রিমিং লিংক পেলে সম্পূর্ণ ব্লকের ক্রমানুযায়ী সাজানো
               elif line_str.startswith("http://") or line_str.startswith("https://"):
                   if current_extinf:
-                      output_lines.append(current_extinf)
-                      output_lines.append(line_str)
+                      block_lines = [current_extinf, line_str]
                       if current_license_type:
-                          output_lines.append(current_license_type)
+                          block_lines.append(current_license_type)
                       if current_license_key:
-                          output_lines.append(current_license_key)
+                          block_lines.append(current_license_key)
+                      
+                      # একটি সম্পূর্ণ চ্যানেল ব্লক তৈরি করে লিস্টে রাখা
+                      blocks.append("\n".join(block_lines))
                       
                       # পরবর্তী ব্লকের জন্য রিসেট
                       current_license_type = None
                       current_license_key = None
                       current_extinf = None
 
-          final_content = "\n".join(output_lines)
+          # প্রতিটি ব্লকের মাঝে ২ লাইন ফাঁকা (গ্যাপ) তৈরি করার জন্য "\n\n\n" ব্যবহার
+          blocks_content = "\n\n\n".join(blocks)
+          final_content = f"#EXTM3U\n\n\n{blocks_content}\n"
 
           # ফাইলটি pizza-repo-তে সেভ করা
           output_path = "pizza-repo/Sun-Network.m3u"
