@@ -1,0 +1,135 @@
+name: Sun Network
+on:
+  schedule:
+    - cron: '*/20 * * * *' # প্রতি ২০ মিনিট পর পর স্বয়ংক্রিয়ভাবে চলবে
+  workflow_dispatch: # ম্যানুয়ালি রান করার জন্য
+
+jobs:
+  update-sun-network:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Dependencies
+        run: |
+          pip install requests
+
+      - name: Process and Update Playlist
+        env:
+          SUN_NETWORK: ${{ secrets.SUN_NETWORK }}
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          cat << 'EOF' > update_sun.py
+          import os
+          import re
+          import requests
+          from datetime import datetime, timedelta, timezone
+
+          # সোর্স প্লেলিস্টের URL সংগ্রহ
+          source_url = os.getenv("SUN_NETWORK")
+          pat_token = os.getenv("PAT_TOKEN")
+
+          if not source_url:
+              print("Error: SUN_NETWORK secret is not set.")
+              exit(1)
+
+          # সোর্স ডাটা ডাউনলোড
+          try:
+              response = requests.get(source_url, timeout=20)
+              if response.status_code != 200:
+                  print(f"Error: Unable to fetch source playlist. Status code: {response.status_code}")
+                  exit(1)
+              content = response.text
+          except Exception as e:
+              print(f"Error fetching source: {e}")
+              exit(1)
+
+          # ডেস্টিনেশন রিপোজিটরি ক্লোন করা
+          os.system(f"git clone https://x-access-token:{pat_token}@github.com/buzzinguaecn/Pizza.git pizza-repo")
+
+          lines = content.splitlines()
+          output_lines = ["#EXTM3U"]
+
+          # প্লেলিস্টের তথ্যাদি সাজানোর জন্য সাময়িক ভ্যারিয়েবল
+          current_license_type = None
+          current_license_key = None
+          current_extinf = None
+
+          for line in lines:
+              line_str = line.strip()
+              if not line_str:
+                  continue
+              if line_str.startswith("#EXTM3U"):
+                  continue
+
+              # লাইসেন্স টাইপ ও কি (Key) সংরক্ষণ
+              if "license_type=" in line_str:
+                  current_license_type = line_str
+              elif "license_key=" in line_str:
+                  current_license_key = line_str
+              
+              # EXTINF রিড করা ও গ্রুপ টাইটেল পরিবর্তন
+              elif line_str.startswith("#EXTINF:"):
+                  extinf = line_str
+                  if 'group-title="' in extinf:
+                      extinf = re.sub(r'group-title="[^"]*"', 'group-title="SAWARID - Sun Network"', extinf)
+                  else:
+                      comma_idx = extinf.rfind(',')
+                      if comma_idx != -1:
+                          extinf = extinf[:comma_idx] + ' group-title="SAWARID - Sun Network"' + extinf[comma_idx:]
+                      else:
+                          extinf = extinf + ' group-title="SAWARID - Sun Network"'
+                  current_extinf = extinf
+              
+              # স্ট্রিমিং লিংক পেলে সম্পূর্ণ ব্লকের ক্রমানুযায়ী সাজানো
+              elif line_str.startswith("http://") or line_str.startswith("https://"):
+                  if current_extinf:
+                      output_lines.append(current_extinf)
+                      output_lines.append(line_str)
+                      if current_license_type:
+                          output_lines.append(current_license_type)
+                      if current_license_key:
+                          output_lines.append(current_license_key)
+                      
+                      # পরবর্তী ব্লকের জন্য রিসেট
+                      current_license_type = None
+                      current_license_key = None
+                      current_extinf = None
+
+          final_content = "\n".join(output_lines)
+
+          # ফাইলটি pizza-repo-তে সেভ করা
+          output_path = "pizza-repo/Sun-Network.m3u"
+          with open(output_path, "w", encoding="utf-8") as f:
+              f.write(final_content)
+          EOF
+          python update_sun.py
+
+      - name: Commit and Push Changes
+        run: |
+          cd pizza-repo
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes found. Commit skipped."
+          else
+            # বাংলাদেশ সময় হিসাব (BST / UTC+6)
+            CURRENT_TIME=$(date -u -d "+6 hours" +"%Y-%m-%d %H:%M:%S")
+            
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              COMMIT_MESSAGE="🆗 Sun Network : Manual Trigger Done ✅ - $CURRENT_TIME 🟡"
+            else
+              COMMIT_MESSAGE="🆗 Sun Network : Scheduled Auto Update Done ✅ - $CURRENT_TIME 🟡"
+            fi
+            
+            git add Sun-Network.m3u
+            git commit -m "$COMMIT_MESSAGE"
+            git push origin main
+          fi
