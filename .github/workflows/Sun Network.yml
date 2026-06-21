@@ -1,4 +1,4 @@
-name: Sun Network
+name: Auto Update Sun Network Playlist
 on:
   schedule:
     - cron: '*/20 * * * *' # প্রতি ২০ মিনিট পর পর স্বয়ংক্রিয়ভাবে চলবে
@@ -105,11 +105,16 @@ jobs:
                       current_license_key = None
                       current_extinf = None
 
-          # প্রতিটি ব্লকের মাঝে ২ লাইন ফাঁকা (গ্যাপ) তৈরি করার জন্য "\n\n\n" ব্যবহার
-          blocks_content = "\n\n\n".join(blocks)
-          final_content = f"#EXTM3U\n\n\n{blocks_content}\n"
+          # বাংলাদেশ সময় তৈরি করা (BST / UTC+6)
+          bst_time = (datetime.now(timezone.utc) + timedelta(hours=6)).strftime('%Y-%m-%d %H:%M:%S')
 
-          # ফাইলটি pizza-repo-তে সেভ করা
+          # প্রতিটি ব্লকের মাঝে ২ লাইন ফাঁকা (গ্যাপ) রাখা
+          blocks_content = "\n\n\n".join(blocks)
+          
+          # ফাইলের আগের সব কিছু মুছে প্রতিবার নতুন টাইমস্ট্যাম্পসহ ফ্রেশ ফাইল তৈরি
+          final_content = f"#EXTM3U\n# Last Updated: {bst_time} (BST)\n\n\n{blocks_content}\n"
+
+          # ফাইলটি pizza-repo-তে সেভ করা ("w" মোডে সেভ করায় আগের ডাটা স্বয়ংক্রিয়ভাবে মুছে যাবে)
           output_path = "pizza-repo/Sun-Network.m3u"
           with open(output_path, "w", encoding="utf-8") as f:
               f.write(final_content)
@@ -122,10 +127,14 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          if git diff --quiet && git diff --staged --quiet; then
+          # ফাইলটি স্টেজিং এরিয়ায় যুক্ত করা হলো
+          git add Sun-Network.m3u
+          
+          # যেহেতু প্রতিবার ফাইলের টাইমস্ট্যাম্প পরিবর্তিত হবে, তাই গিট সবসময় পরিবর্তন খুঁজে পাবে এবং পুশ করবে
+          if git diff --staged --quiet; then
             echo "No changes found. Commit skipped."
           else
-            # বাংলাদেশ সময় হিসাব (BST / UTC+6)
+            # বাংলাদেশ সময় হিসাব
             CURRENT_TIME=$(date -u -d "+6 hours" +"%Y-%m-%d %H:%M:%S")
             
             if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -134,7 +143,6 @@ jobs:
               COMMIT_MESSAGE="🆗 Sun Network : Scheduled Auto Update Done ✅ - $CURRENT_TIME 🟡"
             fi
             
-            git add Sun-Network.m3u
             git commit -m "$COMMIT_MESSAGE"
             git push origin main
           fi
