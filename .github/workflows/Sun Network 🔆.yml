@@ -1,4 +1,4 @@
-name: Auto Update Sun Network Playlist
+name: Sun Network 🔆
 on:
   schedule:
     - cron: '*/20 * * * *' # প্রতি ২০ মিনিট পর পর স্বয়ংক্রিয়ভাবে চলবে
