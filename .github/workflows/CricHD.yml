@@ -83,11 +83,16 @@ jobs:
               "sony sports3"
           }
 
+          # Standard headers to bypass potential 403 Forbidden or security blocks
+          headers = {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          }
+
           # 1. Download CRICHD_PAGE (Channel Template)
           try:
-              r_page = requests.get(page_url, timeout=20)
+              r_page = requests.get(page_url, headers=headers, timeout=20)
               if r_page.status_code != 200:
-                  print("Error: Failed to fetch CRICHD_PAGE")
+                  print(f"Error: Failed to fetch CRICHD_PAGE. HTTP Status Code: {r_page.status_code}")
                   exit(1)
               page_content = r_page.text
           except Exception as e:
@@ -96,9 +101,9 @@ jobs:
 
           # 2. Download CRICHD (Actual Stream Source)
           try:
-              r_source = requests.get(source_url, timeout=20)
+              r_source = requests.get(source_url, headers=headers, timeout=20)
               if r_source.status_code != 200:
-                  print("Error: Failed to fetch CRICHD source")
+                  print(f"Error: Failed to fetch CRICHD source. HTTP Status Code: {r_source.status_code}")
                   exit(1)
               source_content = r_source.text
           except Exception as e:
