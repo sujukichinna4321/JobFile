@@ -1,123 +1,155 @@
-name: CricHD
+name: CricHD Auto Update
 
 on:
   schedule:
     - cron: '*/20 * * * *' # প্রতি ২০ মিনিট পর পর রান হবে
-  workflow_dispatch: # প্রয়োজন হলে ম্যানুয়ালি রান করার জন্য
+  workflow_dispatch: # ম্যানুয়ালি রান করার অপশন
 
 jobs:
   update-playlist:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Pizza Repository
+    - name: Checkout Pizza repository
       uses: actions/checkout@v4
       with:
         repository: buzzinguaecn/Pizza
         token: ${{ secrets.PAT }}
         ref: main
-        path: pizza-repo
 
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.x'
+        python-version: '3.10'
 
-    - name: Process and Update Playlist
+    - name: Generate M3U Playlist
       env:
-        CRICHD_PAGE: ${{ secrets.CRICHD_PAGE }}
-        CRICHD: ${{ secrets.CRICHD }}
+        CRICHD_PAGE_URL: ${{ secrets.CRICHD_PAGE }}
+        CRICHD_URL: ${{ secrets.CRICHD }}
       run: |
-        python -c '
-        import os
+        python -c "
         import urllib.request
+        import re
+        import os
 
-        page_url = os.environ.get("CRICHD_PAGE")
-        src_url = os.environ.get("CRICHD")
+        # অনুমতিপ্রাপ্ত চ্যানেলের তালিকা
+        allowed_channels = {
+            'Star Sports 1',
+            'Star Sports 1 Hindi',
+            'PTV Sports',
+            'Willow HD',
+            'Willow HD 2',
+            'Ten Sports',
+            'A Sports HD',
+            'Sky Sports Cricket',
+            'Sky Cinema',
+            'TNT 1',
+            'TNT 2',
+            'TNT 3',
+            'TNT 4',
+            'Sky Sport Nz 1',
+            'Sky Sport Nz 2',
+            'Sky Sport Nz 3',
+            'Sky Sport Nz 4',
+            'Sky Sport Nz 5',
+            'Sky Sport 6 Nz',
+            'Sky Sport Nz 7',
+            'Sky Sport Nz 8',
+            'Sky Sport Nz 9',
+            'Sky Sports Action',
+            'Sky Sports Golf',
+            'Sky Sports Premier League',
+            'Sky Sports Football',
+            'Sky Sports Arena',
+            'Sky Sports F1',
+            'LaLiGA',
+            'Premier Sports 1',
+            'Premier Sports 2',
+            'Super Football',
+            'Super Premier League',
+            'Fox Cricket 501 HD',
+            'ESPN 1',
+            'ESPN 2',
+            'Sky Sports Mix',
+            'Sky Sports Tennis',
+            'Sony Sports3'
+        }
 
-        if not page_url or not src_url:
-            print("Secrets are missing!")
+        def parse_m3u(content):
+            lines = content.splitlines()
+            channels = []
+            current_channel = None
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith('#EXTINF:'):
+                    if current_channel:
+                        channels.append(current_channel)
+                    # কমার পরের অংশ থেকে চ্যানেলের নাম নেওয়া হচ্ছে
+                    name_match = re.search(r',\s*(.*)$', line)
+                    ch_name = name_match.group(1).strip() if name_match else ''
+                    current_channel = {'inf': line, 'name': ch_name, 'details': []}
+                elif current_channel:
+                    current_channel['details'].append(line)
+            
+            if current_channel:
+                channels.append(current_channel)
+            return channels
+
+        # ডাটা ফেচ করা
+        try:
+            req_page = urllib.request.Request(os.environ['CRICHD_PAGE_URL'], headers={'User-Agent': 'Mozilla/5.0'})
+            req_source = urllib.request.Request(os.environ['CRICHD_URL'], headers={'User-Agent': 'Mozilla/5.0'})
+            
+            page_data = urllib.request.urlopen(req_page).read().decode('utf-8')
+            source_data = urllib.request.urlopen(req_source).read().decode('utf-8')
+        except Exception as e:
+            print(f'Error fetching data: {e}')
             exit(1)
 
-        # Headers to prevent HTTP 403 Forbidden errors
-        headers = {"User-Agent": "Mozilla/5.0"}
+        page_channels = parse_m3u(page_data)
+        source_channels = parse_m3u(source_data)
 
-        # Fetch CRICHD_PAGE
-        req_page = urllib.request.Request(page_url, headers=headers)
-        page_content = urllib.request.urlopen(req_page).read().decode("utf-8")
+        # দ্রুত খোঁজার জন্য সোর্স চ্যানেলগুলোকে ডিকশনারিতে রাখা হলো
+        source_dict = {}
+        for ch in source_channels:
+            if ch['name']:
+                source_dict[ch['name'].lower()] = ch
 
-        # Fetch CRICHD Source
-        req_src = urllib.request.Request(src_url, headers=headers)
-        src_content = urllib.request.urlopen(req_src).read().decode("utf-8")
+        output_blocks = []
 
-        # Function to extract channel name from #EXTINF line
-        def get_channel_name(extinf_line):
-            parts = extinf_line.rsplit(",", 1)
-            if len(parts) > 1:
-                return parts[1].strip()
-            return None
+        # ম্যাচিং প্রক্রিয়া
+        for ch in page_channels:
+            name = ch['name']
+            name_lower = name.lower()
+            
+            # চ্যানেলের নাম যদি এলাউড লিস্টে থাকে
+            if any(allowed.lower() == name_lower for allowed in allowed_channels):
+                if name_lower in source_dict:
+                    src_ch = source_dict[name_lower]
+                    
+                    # ব্লক তৈরি করা হচ্ছে (CRICHD_PAGE এর EXTINF এবং CRICHD এর লিংক ও অপশন সমূহ)
+                    block = [ch['inf']]
+                    for detail in src_ch['details']:
+                        block.append(detail)
+                    
+                    output_blocks.append('\n'.join(block))
 
-        # Parse Source (CRICHD)
-        src_channels = {}
-        current_inf = None
-        current_opts = []
+        # প্লেলিস্টের মূল হেডার এবং ২টি খালি লাইনের ব্যবধান রেখে ফাইল রাইট করা
+        final_content = '#EXTM3U\n\n\n' + '\n\n\n'.join(output_blocks)
 
-        for line in src_content.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#EXTM3U"):
-                continue
-            if line.startswith("#EXTINF:"):
-                current_inf = line
-                current_opts = []
-            elif line.startswith("#EXTVLCOPT:"):
-                current_opts.append(line)
-            elif not line.startswith("#"):
-                # This line is considered the streaming URL
-                if current_inf:
-                    name = get_channel_name(current_inf)
-                    if name:
-                        src_channels[name] = {
-                            "opts": current_opts.copy(),
-                            "url": line
-                        }
-                    current_inf = None
-                    current_opts = []
+        with open('CRICHD.m3u', 'w', encoding='utf-8') as f:
+            f.write(final_content)
+        print('Playlist generated successfully.')
+        "
 
-        # Parse Page and Build Output Playlist
-        output_lines = ["#EXTM3U"]
-
-        for line in page_content.splitlines():
-            line = line.strip()
-            if line.startswith("#EXTINF:"):
-                name = get_channel_name(line)
-                if name and name in src_channels:
-                    output_lines.append(line)
-                    # Append VLCOPTS if they exist
-                    for opt in src_channels[name]["opts"]:
-                        output_lines.append(opt)
-                    # Append Streaming URL
-                    output_lines.append(src_channels[name]["url"])
-                    # Append 2 blank lines (represented by empty strings)
-                    output_lines.append("")
-                    output_lines.append("")
-
-        # Join lines and trim trailing whitespace/extra newlines at the end
-        final_m3u = "\n".join(output_lines).rstrip() + "\n"
-
-        # Write to Pizza Repository path
-        with open("pizza-repo/CRICHD.m3u", "w", encoding="utf-8") as f:
-            f.write(final_m3u)
-        '
-
-    - name: Commit and Push Changes
+    - name: Commit and Push changes
       run: |
-        cd pizza-repo
-        git config --local user.email "github-actions[bot]@users.noreply.github.com"
-        git config --local user.name "github-actions[bot]"
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
         git add CRICHD.m3u
-        if git diff --staged --quiet; then
-          echo "No changes detected. Skipping push."
-        else
-          git commit -m "Auto Update CricHD Playlist"
-          git push origin main
-        fi
+        # ফাইলটিতে কোনো পরিবর্তন আসলেই কেবল কমিট হবে
+        git diff-index --quiet HEAD || git commit -m 'Auto-updated CRICHD.m3u [Skip CI]'
+        git push origin main
