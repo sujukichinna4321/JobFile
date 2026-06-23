@@ -1,8 +1,8 @@
 name: CricHD
 on:
   schedule:
-    - cron: '*/20 * * * *' # প্রতি ২০ মিনিট পর পর স্বয়ংক্রিয়ভাবে চলবে
-  workflow_dispatch: # ম্যানুয়ালি রান করার জন্য
+    - cron: '*/20 * * * *' # Runs automatically every 20 minutes
+  workflow_dispatch: # Allows manual trigger
 
 jobs:
   update-crichd:
@@ -31,7 +31,7 @@ jobs:
           import requests
           from datetime import datetime, timedelta, timezone
 
-          # সিক্রেট ভ্যারিয়েবল থেকে সোর্স লিঙ্ক সংগ্রহ
+          # Fetch source URLs and token from environment variables
           page_url = os.getenv("CRICHD_PAGE")
           source_url = os.getenv("CRICHD")
           pat_token = os.getenv("PAT_TOKEN")
@@ -40,7 +40,50 @@ jobs:
               print("Error: CRICHD_PAGE or CRICHD secrets are not set.")
               exit(1)
 
-          # ১. CRICHD_PAGE (চ্যানেল টেমপ্লেট) ডাউনলোড করা
+          # Allowed channel names list (Normalized to lowercase)
+          ALLOWED_CHANNELS = {
+              "star sports 1",
+              "star sports 1 hindi",
+              "ptv sports",
+              "willow hd",
+              "willow hd 2",
+              "ten sports",
+              "a sports hd",
+              "sky sports cricket",
+              "sky cinema",
+              "tnt 1",
+              "tnt 2",
+              "tnt 3",
+              "tnt 4",
+              "sky sport nz 1",
+              "sky sport nz 2",
+              "sky sport nz 3",
+              "sky sport nz 4",
+              "sky sport nz 5",
+              "sky sport 6 nz",
+              "sky sport nz 7",
+              "sky sport nz 8",
+              "sky sport nz 9",
+              "sky sports action",
+              "sky sports golf",
+              "sky sports premier league",
+              "sky sports football",
+              "sky sports arena",
+              "sky sports f1",
+              "laliga",
+              "premier sports 1",
+              "premier sports 2",
+              "super football",
+              "super premier league",
+              "fox cricket 501 hd",
+              "espn 1",
+              "espn 2",
+              "sky sports mix",
+              "sky sports tennis",
+              "sony sports3"
+          }
+
+          # 1. Download CRICHD_PAGE (Channel Template)
           try:
               r_page = requests.get(page_url, timeout=20)
               if r_page.status_code != 200:
@@ -51,7 +94,7 @@ jobs:
               print(f"Error fetching CRICHD_PAGE: {e}")
               exit(1)
 
-          # ২. CRICHD (মূল স্ট্রিমিং সোর্স) ডাউনলোড করা
+          # 2. Download CRICHD (Actual Stream Source)
           try:
               r_source = requests.get(source_url, timeout=20)
               if r_source.status_code != 200:
@@ -62,10 +105,10 @@ jobs:
               print(f"Error fetching CRICHD source: {e}")
               exit(1)
 
-          # ডেস্টিনেশন রিপোজিটরি ক্লোন করা
+          # Clone destination repository
           os.system(f"git clone https://x-access-token:{pat_token}@github.com/buzzinguaecn/Pizza.git pizza-repo")
 
-          # ৩. CRICHD (সোর্স) থেকে চ্যানেল ডাটা পার্স করা
+          # 3. Parse CRICHD source data
           crichd_data = {}
           current_name = None
           current_vlcopts = []
@@ -93,7 +136,7 @@ jobs:
                       current_name = None
                       current_vlcopts = []
 
-          # ৪. CRICHD_PAGE (টেমপ্লেট) অনুযায়ী ম্যাপিং করা
+          # 4. Map template against actual source and allowed channels list
           blocks = []
           for line in page_content.splitlines():
               line_str = line.strip()
@@ -106,24 +149,24 @@ jobs:
                       page_chan_name = line_str[comma_idx+1:].strip()
                       page_key = page_chan_name.lower()
                       
-                      # যদি সোর্স ফাইলে এই চ্যানেল নামটি খুঁজে পাওয়া যায়
-                      if page_key in crichd_data:
+                      # Match with CRICHD data and verify it is allowed
+                      if page_key in crichd_data and page_key in ALLOWED_CHANNELS:
                           match = crichd_data[page_key]
-                          block_lines = [line_str] # মূল টেমপ্লেট #EXTINF লাইন
+                          block_lines = [line_str]
                           if match["vlcopts"]:
-                              block_lines.extend(match["vlcopts"]) # VLCOPT যুক্ত করা
-                          block_lines.append(match["url"]) # স্ট্রিমিং ইউআরএল যুক্ত করা
+                              block_lines.extend(match["vlcopts"])
+                          block_lines.append(match["url"])
                           
                           blocks.append("\n".join(block_lines))
 
-          # বাংলাদেশ সময় নির্ধারণ (BST / UTC+6)
+          # Fetch Bangladesh Standard Time (UTC+6)
           bst_time = (datetime.now(timezone.utc) + timedelta(hours=6)).strftime('%Y-%m-%d %H:%M:%S')
 
-          # ২ লাইনের গ্যাপ তৈরি করতে "\n\n\n" ব্যবহার করা হলো
+          # Join blocks with exactly 2 blank lines (\n\n\n)
           blocks_content = "\n\n\n".join(blocks)
           final_content = f"#EXTM3U\n# Last Updated: {bst_time} (BST)\n\n\n{blocks_content}\n"
 
-          # ফাইলটি pizza-repo-তে সেভ করা (আগের ডাটা সম্পূর্ণ মুছে যাবে)
+          # Save output (Overwrites the existing file)
           output_path = "pizza-repo/CRICHD.m3u"
           with open(output_path, "w", encoding="utf-8") as f:
               f.write(final_content)
@@ -136,10 +179,10 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          # ফাইলটি স্টেজিং এরিয়ায় যুক্ত করা হলো
+          # Stage the file to track modifications
           git add CRICHD.m3u
           
-          # পরিবর্তনের ডিস্ট্রিবিউশন চেক এবং পুশ
+          # Check for changes and push
           if git diff --staged --quiet; then
             echo "No changes found. Commit skipped."
           else
