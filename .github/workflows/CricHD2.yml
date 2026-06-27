@@ -30,19 +30,37 @@ jobs:
           import re
           import os
 
-          # সিক্রেট থেকে URL গুলো নেওয়া
-          page_url = os.environ.get('CRICHD_PAGE_URL')
-          source_url = os.environ.get('CRICHD_SOURCE_URL')
-          source2_url = os.environ.get('CRICHD_SOURCE2_URL')
+          # ইউআরএল ক্লিন করার ফাংশন (কোটেশন, স্পেস এবং অদৃশ্য ইউনিকোড ক্যারেক্টার বাদ দেওয়ার জন্য)
+          def clean_url(url):
+              if not url:
+                  return ""
+              # স্পেস, ট্যাব, নিউলাইন এবং একক/দ্বৈত কোটেশন মার্ক ট্রিম করা
+              cleaned = url.strip(" \t\n\r\"'")
+              # অদৃশ্য বা হিডেন ইউনিকোড ক্যারেক্টার ছেঁকে বাদ দেওয়া (শুধুমাত্র প্রিন্টযোগ্য স্ট্যান্ডার্ড ASCII রাখা)
+              cleaned = "".join(c for c in cleaned if 32 < ord(c) < 127)
+              return cleaned
 
-          # স্পেস ট্রিম করে নেওয়া যাতে কোনো স্পেসের কারণে ডাউনলোড ফেইল না হয়
-          if page_url: page_url = page_url.strip()
-          if source_url: source_url = source_url.strip()
-          if source2_url: source2_url = source2_url.strip()
+          # সিক্রেট থেকে URL গুলো নেওয়া এবং ক্লিন করা
+          page_url = clean_url(os.environ.get('CRICHD_PAGE_URL'))
+          source_url = clean_url(os.environ.get('CRICHD_SOURCE_URL'))
+          source2_url = clean_url(os.environ.get('CRICHD_SOURCE2_URL'))
 
           if not page_url or not source_url or not source2_url:
               print("❌ Secret URLs not found!")
               exit(1)
+
+          # লিংকগুলো সঠিক ফরম্যাটে (http/https) আছে কি না তার ডায়াগনস্টিক চেক
+          def check_url_format(url, name):
+              if not (url.startswith("http://") or url.startswith("https://")):
+                  print(f"\n❌ Error: {name} URL is invalid!")
+                  # নিরাপত্তার স্বার্থে ও ভুল সনাক্ত করতে শুধুমাত্র প্রথম ১৫টি অক্ষর প্রিন্ট করা হচ্ছে
+                  print(f"👉 Your secret '{name}' value starts with: '{url[:15]}...' (Total Length: {len(url)})")
+                  print("👉 Please make sure you have pasted the correct URL or did not write any other text in GitHub Secrets.")
+                  exit(1)
+
+          check_url_format(page_url, "CRICHD_PAGE")
+          check_url_format(source_url, "CRICHD")
+          check_url_format(source2_url, "CRICHD_2ND")
 
           print(f"📥 Page playlist: {page_url}")
           print(f"📥 Source playlist: {source_url}")
