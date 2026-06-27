@@ -1,0 +1,171 @@
+name: FIFA 2026 Playlist Updater
+
+on:
+  schedule:
+    # প্রতি ৫ মিনিট পর পর রান হবে
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    # এটি ম্যানুয়ালি রান করার সুবিধা দেবে
+
+jobs:
+  update-playlist:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Fetch, Process and Update Playlist
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          FIFA26_SECRET: ${{ secrets.FIFA26 }}
+          SOURCE_BINGSTREAM: ${{ secrets.SOURCE_BINGSTREAM }}
+          SOURCE_AX: ${{ secrets.SOURCE_AX }}
+        run: |
+          python -c "
+          import os
+          import re
+          import urllib.request
+          import subprocess
+
+          # পরিবেশ ভেরিয়েবল থেকে সিক্রেটগুলো গ্রহণ করা
+          pat_token = os.environ.get('PAT_TOKEN', '')
+          fifa26_secret = os.environ.get('FIFA26_SECRET', '')
+          source_bingstream = os.environ.get('SOURCE_BINGSTREAM', '')
+          source_ax = os.environ.get('SOURCE_AX', '')
+
+          if not pat_token or not fifa26_secret:
+              print('Error: Missing critical secrets PAT_TOKEN or FIFA26.')
+              exit(1)
+
+          # FIFA26 সিক্রেট থেকে রিপোজিটরি নেম ও ফাইল পাথ আলাদা করা
+          # ইনপুট ফরম্যাট: https://github.com/buzzinguaecn/Pizza/blob/main/FIFA2026.m3u
+          clean_path = fifa26_secret.replace('https://github.com/', '')
+          parts = [p for p in clean_path.split('/') if p]
+          if len(parts) >= 2:
+              repo_owner_name = f'{parts[0]}/{parts[1]}'
+              file_name = parts[-1]
+          else:
+              print('Could not parse FIFA26 secret structure. Defaulting to buzzinguaecn/Pizza and FIFA2026.m3u')
+              repo_owner_name = 'buzzinguaecn/Pizza'
+              file_name = 'FIFA2026.m3u'
+
+          print(f'Target Repository: {repo_owner_name}')
+          print(f'Target File Path: {file_name}')
+
+          # টার্গেট রিপোজিটরি ক্লোন করা
+          clone_url = f'https://{pat_token}@github.com/{repo_owner_name}.git'
+          repo_dir = 'target_repo'
+          if os.path.exists(repo_dir):
+              subprocess.run(['rm', '-rf', repo_dir])
+          
+          clone_res = subprocess.run(['git', 'clone', clone_url, repo_dir])
+          if clone_res.returncode != 0:
+              print('Failed to clone target repository.')
+              exit(1)
+
+          # সোর্স m3u থেকে নির্দিষ্ট গ্রুপ টাইটেল ফিল্টার করার ফাংশন
+          def fetch_entries(url):
+              entries = []
+              if not url:
+                  return entries
+              try:
+                  req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                  with urllib.request.urlopen(req, timeout=20) as response:
+                      content = response.read().decode('utf-8', errors='ignore')
+              except Exception as e:
+                  print(f'Error fetching {url}: {e}')
+                  return entries
+
+              lines = content.splitlines()
+              i = 0
+              while i < len(lines):
+                  line = lines[i].strip()
+                  if line.startswith('#EXTINF:'):
+                      # group-title চেক করা
+                      match = re.search(r'group-title=\"([^\"]*)\"', line)
+                      if match:
+                          g_title = match.group(1)
+                          if g_title in ['Football', 'football', 'World Cup', 'world cup']:
+                              # group-title পরিবর্তন করে FIFA World Cup করা
+                              modified_line = re.sub(r'group-title=\"[^\"]*\"', 'group-title=\"FIFA World Cup\"', line)
+                              
+                              # পরবর্তী লাইনে থাকা ইউআরএলটি খুঁজে নেওয়া
+                              url_line = ''
+                              j = i + 1
+                              while j < len(lines):
+                                  next_line = lines[j].strip()
+                                  if next_line and not next_line.startswith('#'):
+                                      url_line = next_line
+                                      break
+                                  elif next_line.startswith('#'):
+                                      break
+                                  j += 1
+                              if url_line:
+                                  entries.append((modified_line, url_line))
+                                  i = j
+                  i += 1
+              return entries
+
+          # উভয় সোর্স থেকে ডাটা সংগ্রহ
+          all_entries = []
+          all_entries.extend(fetch_entries(source_bingstream))
+          all_entries.extend(fetch_entries(source_ax))
+
+          start_marker = '# 🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡 FIFA 2026 UPADTE HERE  🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡'
+          end_marker = '# 🔴🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🔴 FIFA 2026 ENDED HERE  🔴🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🔴'
+
+          # প্রতিটি এন্ট্রির মাঝে ২ লাইন খালি রাখা নিশ্চিত করা
+          if all_entries:
+              formatted_list = [f'{ext}\n{url}' for ext, url in all_entries]
+              replacement_data = '\n\n\n'.join(formatted_list)
+          else:
+              replacement_data = '# Not Found Data'
+
+          target_file_path = os.path.join(repo_dir, file_name)
+
+          if os.path.exists(target_file_path):
+              with open(target_file_path, 'r', encoding='utf-8') as f:
+                  file_content = f.read()
+          else:
+              file_content = '#EXTM3U\n'
+
+          # কমেন্ট ব্লক রিপ্লেস করার লজিক
+          if start_marker in file_content and end_marker in file_content:
+              parts = file_content.split(start_marker)
+              before = parts[0]
+              after = parts[1].split(end_marker)[1]
+              new_content = before.rstrip() + '\n' + start_marker + '\n' + replacement_data + '\n' + end_marker + '\n' + after.lstrip()
+          else:
+              # কমেন্ট না থাকলে, ১৫০ লাইনের পর বা ফাইলের শেষে নতুন করে কমেন্টসহ যুক্ত করা
+              lines = file_content.splitlines()
+              if len(lines) >= 150:
+                  before_lines = lines[:150]
+                  after_lines = lines[150:]
+                  new_content = '\n'.join(before_lines) + '\n\n' + start_marker + '\n' + replacement_data + '\n' + end_marker + '\n\n' + '\n'.join(after_lines)
+              else:
+                  new_content = file_content.rstrip() + '\n\n' + start_marker + '\n' + replacement_data + '\n' + end_marker + '\n'
+
+          # ফাইলে নতুন কন্টেন্ট রাইট করা
+          with open(target_file_path, 'w', encoding='utf-8') as f:
+              f.write(new_content)
+
+          # পরিবর্তনগুলো টার্গেট রিপোজিটরিতে পুশ করা
+          os.chdir(repo_dir)
+          subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'])
+          subprocess.run(['git', 'config', 'user.email', 'github-actions[bot]@users.noreply.github.com'])
+          
+          status_res = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True)
+          if status_res.stdout.strip():
+              subprocess.run(['git', 'add', file_name])
+              subprocess.run(['git', 'commit', '-m', 'Routine update for FIFA 2026 Playlist'])
+              push_res = subprocess.run(['git', 'push'])
+              if push_res.returncode == 0:
+                  print('Changes pushed successfully.')
+              else:
+                  print('Error pushing changes to the repository.')
+          else:
+              print('No new changes detected in the playlist.')
+          "
