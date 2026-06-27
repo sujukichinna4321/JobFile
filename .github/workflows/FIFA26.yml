@@ -21,8 +21,8 @@ jobs:
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
           FIFA26_SECRET: ${{ secrets.FIFA26 }}
-          SOURCE_BINGSTREAM: ${{ secrets.SOURCE_BINGSTREAM }}
-          SOURCE_AX: ${{ secrets.SOURCE_AX }}
+          SOURCE_BINGSTREAM: ${{ secrets.BINGSTREAM }}
+          SOURCE_AX: ${{ secrets.AX }}
         run: |
           python -c "
           import os
