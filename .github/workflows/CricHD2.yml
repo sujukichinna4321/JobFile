@@ -1,0 +1,197 @@
+name: CricHD 2
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'  # প্রতি ৫ মিনিট পর পর রান হবে
+  workflow_dispatch:  # ম্যানুয়ালি রান করার অপশন
+
+jobs:
+  update-playlist:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Generate Updated Playlist
+        run: |
+          python << 'PYEOF'
+          import requests
+          import re
+          import os
+
+          # সিক্রেট থেকে URL গুলো নেওয়া
+          page_url = os.environ.get('CRICHD_PAGE_URL')
+          source_url = os.environ.get('CRICHD_SOURCE_URL')
+          source2_url = os.environ.get('CRICHD_SOURCE2_URL')
+
+          if not page_url:
+              print("❌ Page URL not found!")
+              exit(1)
+
+          print(f"📥 Page playlist: {page_url}")
+          print(f"📥 Source 1 playlist: {source_url}")
+          print(f"📥 Source 2 playlist: {source2_url}")
+
+          # CRICHD_PAGE ডাউনলোড
+          try:
+              page_resp = requests.get(page_url, timeout=30)
+              page_resp.raise_for_status()
+              page_lines = page_resp.text.strip().split('\n')
+              print(f"✅ Page playlist downloaded: {len(page_lines)} lines")
+          except Exception as e:
+              print(f"❌ Failed to download page playlist: {e}")
+              exit(1)
+
+          # সোর্স ফাইলগুলো ডাউনলোড করার সাধারণ ফাংশন
+          def download_playlist(url, name):
+              if not url:
+                  print(f"⚠️ {name} URL is empty.")
+                  return []
+              try:
+                  resp = requests.get(url, timeout=30)
+                  resp.raise_for_status()
+                  lines = resp.text.strip().split('\n')
+                  print(f"✅ {name} downloaded: {len(lines)} lines")
+                  return lines
+              except Exception as e:
+                  print(f"❌ Failed to download {name}: {e}")
+                  return []
+
+          source_lines = download_playlist(source_url, "Source 1")
+          source2_lines = download_playlist(source2_url, "Source 2")
+
+          # চ্যানেলের নাম গুলো (ম্যাচ করার জন্য)
+          target_channels = [
+              "Star Sports 1", "Star Sports 1 Hindi", "PTV Sports",
+              "Willow HD", "Willow HD 2", "Ten Sports", "A Sports HD",
+              "Sky Sports Cricket", "Sky Cinema", "TNT 1", "TNT 2", "TNT 3", "TNT 4",
+              "Sky Sport Nz 1", "Sky Sport Nz 2", "Sky Sport Nz 3", "Sky Sport Nz 4",
+              "Sky Sport Nz 5", "Sky Sport 6 Nz", "Sky Sport Nz 7", "Sky Sport Nz 8",
+              "Sky Sport Nz 9", "Sky Sports Action", "Sky Sports Golf",
+              "Sky Sports Premier League", "Sky Sports Football", "Sky Sports Arena",
+              "Sky Sports F1", "LaLiGA", "Premier Sports 1", "Premier Sports 2",
+              "Super Football", "Super Premier League", "Fox Cricket 501 HD",
+              "ESPN 1", "ESPN 2", "Sky Sports Mix", "Sky Sports Tennis",
+              "Sony Sports3"
+          ]
+
+          # Helper function to get channel name from EXTINF line
+          def get_channel_name(line):
+              if line.startswith('#EXTINF:'):
+                  parts = line.split(',')
+                  if len(parts) > 1:
+                      return parts[-1].strip()
+              return None
+
+          source_blocks = {}
+
+          # সোর্স থেকে ডাটা পার্স করার মূল লজিক (আগের লজিক অপরিবর্তিত রাখা হয়েছে)
+          def parse_source(lines):
+              i = 0
+              while i < len(lines):
+                  line = lines[i].strip()
+                  if line.startswith('#EXTINF:'):
+                      ch_name = get_channel_name(line)
+                      if ch_name and ch_name in target_channels:
+                          block_lines = [line]
+                          i += 1
+                          # #EXTINF এর নিচের #EXTVLCOPT এবং স্ট্রিমিং URL গুলো কালেক্ট
+                          while i < len(lines):
+                              next_line = lines[i].strip()
+                              if next_line.startswith('#EXTINF:'):
+                                  break
+                              if next_line:  # খালি লাইন স্কিপ
+                                  block_lines.append(next_line)
+                              i += 1
+                          
+                          # যদি চ্যানেলটি পূর্বে (যেমন ১ম সোর্স থেকে) যুক্ত না হয়ে থাকে, তবেই এটি যুক্ত হবে
+                          if ch_name not in source_blocks:
+                              source_blocks[ch_name] = '\n'.join(block_lines)
+                          continue
+                  i += 1
+
+          # দুটি সোর্স থেকেই ডাটা পার্স করা হচ্ছে (১ম সোর্স অগ্রাধিকার পাবে)
+          parse_source(source_lines)
+          parse_source(source2_lines)
+
+          print(f"🔍 Found {len(source_blocks)} matching channels in combined sources")
+
+          # Page playlist থেকে EXTINF লাইন গুলো প্রসেস করে ফাইনাল প্লেলিস্ট তৈরি (আগের লজিক)
+          final_lines = []
+          i = 0
+          while i < len(page_lines):
+              line = page_lines[i].strip()
+              if line.startswith('#EXTINF:'):
+                  ch_name = get_channel_name(line)
+                  if ch_name and ch_name in source_blocks:
+                      # Page এর EXTINF লাইন + সোর্স থেকে স্ট্রিমিং ব্লক
+                      final_lines.append(line)
+                      final_lines.append(source_blocks[ch_name].split('\n', 1)[1] if '\n' in source_blocks[ch_name] else '')
+                      # #EXTINF এর পরের লাইনগুলো স্কিপ (যেগুলো সোর্স থেকে বসানো হয়েছে সেগুলো বাদে)
+                      i += 1
+                      while i < len(page_lines):
+                          next_line = page_lines[i].strip()
+                          if next_line.startswith('#EXTINF:'):
+                              break
+                          i += 1
+                      # গ্যাপ (২ লাইন)
+                      final_lines.append('')
+                      final_lines.append('')
+                      continue
+                  else:
+                      final_lines.append(line)
+              elif line.startswith('#EXTM3U'):
+                  final_lines.append(line)
+              i += 1
+
+          # যদি #EXTM3U না থাকে, প্রথমে বসানো
+          if final_lines and not final_lines[0].startswith('#EXTM3U'):
+              final_lines.insert(0, '#EXTM3U')
+
+          content = '\n'.join(final_lines)
+          
+          # আউটপুট ফাইল সংরক্ষণ
+          with open('CRICHD.m3u', 'w', encoding='utf-8') as f:
+              f.write(content)
+          
+          print(f"✅ Generated playlist: {len(content)} characters, {content.count('#EXTINF:')} entries")
+          print("📋 First 15 lines of output:")
+          for line in content.split('\n')[:15]:
+              print(f"  {line}")
+          PYEOF
+        env:
+          CRICHD_PAGE_URL: ${{ secrets.CRICHD_PAGE }}
+          CRICHD_SOURCE_URL: ${{ secrets.CRICHD }}
+          CRICHD_SOURCE2_URL: ${{ secrets.CRICHD_2ND }} # ২য় সোর্সের জন্য নতুন সিক্রেট যুক্ত করা হয়েছে
+
+      - name: Deploy to Pizza Repository
+        run: |
+          # Pizza রিপোজিটরি ক্লোন
+          git clone https://${{ secrets.PAT_TOKEN }}@github.com/buzzinguaecn/Pizza.git pizza-repo
+          
+          # জেনারেট করা ফাইল কপি
+          cp CRICHD.m3u pizza-repo/CRICHD.m3u
+          
+          cd pizza-repo
+          
+          # Git কনফিগ
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # কমিট এবং পুশ
+          git add CRICHD.m3u
+          git diff --staged --quiet || git commit -m "🔄 Auto-update CRICHD playlist [skip ci]"
+          git push origin main
+          
+          echo "✅ Successfully pushed to buzzinguaecn/Pizza/main/CRICHD.m3u"
