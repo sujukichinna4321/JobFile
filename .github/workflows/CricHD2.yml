@@ -29,10 +29,17 @@ jobs:
           import requests
           import os
 
-          # সিক্রেট থেকে URL গুলো নেওয়া
+          # সিক্রেট থেকে URL গুলো নেওয়া এবং আগে-পিছে থাকা অতিরিক্ত স্পেস (.strip()) ক্লিন করা
           page_url = os.environ.get('CRICHD_PAGE_URL')
           source_url = os.environ.get('CRICHD_SOURCE_URL')
           source2_url = os.environ.get('CRICHD_SOURCE2_URL')
+
+          if page_url:
+              page_url = page_url.strip()
+          if source_url:
+              source_url = source_url.strip()
+          if source2_url:
+              source2_url = source2_url.strip()
 
           # কঠোর নিরাপত্তা চেক (কোনো সিক্রেট মিসিং থাকলে রান ফেইল হবে)
           if not page_url:
