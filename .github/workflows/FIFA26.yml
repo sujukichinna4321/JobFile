@@ -24,7 +24,6 @@ jobs:
           SOURCE_BINGSTREAM: ${{ secrets.SOURCE_BINGSTREAM }}
           SOURCE_AX: ${{ secrets.SOURCE_AX }}
         run: |
-          # পাইথন স্ক্রিপ্ট ফাইল তৈরি
           cat << 'EOF' > update_playlist.py
           import os
           import re
@@ -84,18 +83,18 @@ jobs:
               while i < len(lines):
                   line = lines[i].strip()
                   if line.startswith('#EXTINF:'):
-                      # group-title এর মান খোঁজা (স্পেস এবং সিঙ্গেল/ডাবল কোটেশন সহনশীল)
+                      # group-title এর মান খোঁজা
                       match = re.search(r'group-title\s*=\s*["\']([^"\']+)["\']', line, re.IGNORECASE)
                       if match:
                           g_title = match.group(1).strip().lower()
                           # গ্রুপ টাইটেলে কিওয়ার্ডগুলোর যেকোনো একটি থাকলেই ম্যাচ করবে
                           if 'football' in g_title or 'world cup' in g_title:
                               block_lines = []
-                              # গ্রুপ টাইটেলটি পরিবর্তন করে 'FIFA World Cup' করা হচ্ছে
+                              # গ্রুপ টাইটেল পরিবর্তন করে 'FIFA World Cup' করা হচ্ছে
                               modified_line = re.sub(r'group-title\s*=\s*["\'][^"\']+["\']', 'group-title="FIFA World Cup"', line, flags=re.IGNORECASE)
                               block_lines.append(modified_line)
                               
-                              # পরবর্তী লাইনগুলো (অপশন এবং স্ট্রিম লিংক) সংগ্রহ করা
+                              # পরবর্তী অপশন ও স্ট্রিম লিংক সংগ্রহ করা
                               j = i + 1
                               url_found = False
                               while j < len(lines):
@@ -104,20 +103,17 @@ jobs:
                                       j += 1
                                       continue
                                   
-                                  # যদি পরবর্তী এন্ট্রি শুরু হয়ে যায়, তবে থামা হবে
                                   if next_line.startswith('#EXTINF:'):
                                       break
                                   
                                   block_lines.append(next_line)
                                   
-                                  # লাইনটি যদি স্ট্রিম লিংক হয় (কোনো '#' ছাড়াই), তবে এন্ট্রি সম্পন্ন হবে
                                   if not next_line.startswith('#'):
                                       url_found = True
                                       break
                                   j += 1
                               
                               if url_found:
-                                  # সম্পূর্ণ এন্ট্রি ব্লকটি যুক্ত করা হলো
                                   entries.append("\n".join(block_lines))
                                   i = j # ইনডেক্স পজিশন আপডেট
                   i += 1
@@ -130,10 +126,10 @@ jobs:
 
           print(f"Total matched entries found: {len(all_entries)}")
 
-          start_marker = "# 🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡 FIFA 2026 UPADTE HERE  🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡"
-          end_marker = "# 🔴🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🔴 FIFA 2026 ENDED HERE  🔴🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🔴"
+          start_marker = "# 🟡🟡🟡🟡🟡🔵🔵🔵🔵🔵🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡 FIFA 2026 UPADTE HERE  🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🔵🔵🔵🔵🔵🟡🟡🟡🟡🟡"
+          end_marker = "# 🔴🔴🔴🔴🔴🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🔴 FIFA 2026 ENDED HERE  🔴🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🔴🔴🔴🔴🔴"
 
-          # প্রতিটি এন্ট্রির মাঝে ঠিক ২ লাইন খালি রাখা নিশ্চিত করা
+          # প্রতিটি এন্ট্রির মাঝে ঠিক ২ লাইন খালি রাখা
           if all_entries:
               replacement_data = "\n\n\n".join(all_entries)
           else:
@@ -147,21 +143,25 @@ jobs:
           else:
               file_content = "#EXTM3U\n"
 
+          # ১০ লাইন খালি গ্যাপ দেওয়ার লজিক (rstrip/lstrip ব্যবহারে অতিরিক্ত স্পেস তৈরি হওয়া রোধ হবে)
+          gap_above = "\n" * 11  # ১১টি নিউলাইন ক্যারেক্টার মানে ১০টি খালি লাইন
+          gap_below = "\n" * 11
+
           # প্লেলিস্টে কমেন্ট ব্লকের ভেতরের ডাটা পরিবর্তন করা
           if start_marker in file_content and end_marker in file_content:
               parts = file_content.split(start_marker)
               before = parts[0]
               after = parts[1].split(end_marker)[1]
-              new_content = before.rstrip() + "\n" + start_marker + "\n" + replacement_data + "\n" + end_marker + "\n" + after.lstrip()
+              new_content = before.rstrip() + gap_above + start_marker + "\n" + replacement_data + "\n" + end_marker + gap_below + after.lstrip()
           else:
-              # কমেন্ট না থাকলে ১২০ লাইনের পর অথবা ফাইলের শেষে নতুন করে ব্লক যুক্ত করা
+              # কমেন্ট না থাকলে ১৫০ লাইনের পর অথবা ফাইলের শেষে নতুন করে ব্লক যুক্ত করা
               lines = file_content.splitlines()
-              if len(lines) >= 120:
-                  before_lines = lines[:120]
-                  after_lines = lines[120:]
-                  new_content = "\n".join(before_lines) + "\n\n" + start_marker + "\n" + replacement_data + "\n" + end_marker + "\n\n" + "\n".join(after_lines)
+              if len(lines) >= 150:
+                  before_lines = lines[:150]
+                  after_lines = lines[150:]
+                  new_content = "\n".join(before_lines).rstrip() + gap_above + start_marker + "\n" + replacement_data + "\n" + end_marker + gap_below + "\n".join(after_lines).lstrip()
               else:
-                  new_content = file_content.rstrip() + "\n\n" + start_marker + "\n" + replacement_data + "\n" + end_marker + "\n"
+                  new_content = file_content.rstrip() + gap_above + start_marker + "\n" + replacement_data + "\n" + end_marker + gap_below
 
           # ফাইলে নতুন কন্টেন্ট সেভ করা
           with open(target_file_path, 'w', encoding='utf-8') as f:
