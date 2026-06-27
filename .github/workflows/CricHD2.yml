@@ -28,40 +28,40 @@ jobs:
           python << 'PYEOF'
           import requests
           import os
-          import re
 
           # সিক্রেট থেকে URL গুলো নেওয়া
           page_url = os.environ.get('CRICHD_PAGE_URL')
           source_url = os.environ.get('CRICHD_SOURCE_URL')
           source2_url = os.environ.get('CRICHD_SOURCE2_URL')
 
-          # সিক্রেট ভ্যালিডেশন (কোনোটি খালি থাকলে বিল্ড ফেইল হবে)
+          # কঠোর নিরাপত্তা চেক (কোনো সিক্রেট মিসিং থাকলে রান ফেইল হবে)
           if not page_url:
-              print("❌ ERROR: Secret 'CRICHD_PAGE' is empty or missing!")
+              print("❌ Error: Secret 'CRICHD_PAGE' (CRICHD_PAGE_URL) is missing or empty!")
               exit(1)
           if not source_url:
-              print("❌ ERROR: Secret 'CRICHD' is empty or missing!")
+              print("❌ Error: Secret 'CRICHD' (CRICHD_SOURCE_URL) is missing or empty!")
               exit(1)
           if not source2_url:
-              print("❌ ERROR: Secret 'CRICHD_2ND' is empty or missing! Please check GitHub Secrets.")
+              print("❌ Error: Secret 'CRICHD_2ND' (CRICHD_SOURCE2_URL) is missing or empty!")
+              print("👉 Please make sure you have added 'CRICHD_2ND' in your GitHub Repository Secrets.")
               exit(1)
 
-          # প্লেলিস্ট ডাউনলোড করার ফাংশন
+          # প্লেলিস্ট ডাউনলোড ও লাইন ক্লিন করার ফাংশন
           def download_playlist(url, name):
               try:
                   resp = requests.get(url, timeout=30)
                   resp.raise_for_status()
-                  # \r এবং ট্রেইলিং স্পেস দূর করে লাইনগুলো ক্লিন করা হচ্ছে
+                  # \r দূর করে লাইনগুলো ক্লিন করা হচ্ছে
                   lines = [line.strip().replace('\r', '') for line in resp.text.split('\n')]
                   print(f"✅ {name} downloaded successfully: {len(lines)} lines")
                   return lines
               except Exception as e:
-                  print(f"❌ ERROR: Failed to download {name}: {e}")
-                  exit(1) # ফেইল হলে স্ক্রিপ্ট বন্ধ হবে
+                  print(f"❌ Error: Failed to download {name} from URL: {e}")
+                  exit(1) # ডাউনলোড ব্যর্থ হলে রান বন্ধ হয়ে যাবে
 
           page_lines = download_playlist(page_url, "Page template")
-          source_lines = download_playlist(source_url, "Source 1 (CRICHD)")
-          source2_lines = download_playlist(source2_url, "Source 2 (CRICHD_2ND)")
+          source_lines = download_playlist(source_url, "Source 1")
+          source2_lines = download_playlist(source2_url, "Source 2")
 
           # চ্যানেলের নাম গুলো (ম্যাচ করার জন্য)
           target_channels = [
@@ -78,62 +78,52 @@ jobs:
               "Sony Sports3"
           ]
 
-          # নামের অমিল এড়াতে নরমাল ডিকশনারি তৈরি (যেমন: "PTV Sports" -> "ptvsports")
-          def normalize_name(name):
-              if not name:
-                  return ""
-              return "".join(name.split()).lower()
-
-          # টার্গেট চ্যানেলের নরমাল ম্যাপ
-          normalized_targets = {normalize_name(ch): ch for ch in target_channels}
-
           # Helper function to get channel name from EXTINF line
           def get_channel_name(line):
               if line.startswith('#EXTINF:'):
                   parts = line.split(',')
                   if len(parts) > 1:
-                      return parts[-1].strip().strip('"\'')
+                      return parts[-1].strip()
               return None
 
-          # সোর্স ফাইল থেকে অপশন ও স্ট্রিমিং লিঙ্কের লাইনগুলো নিষ্কাশন করার ফাংশন
-          def extract_streaming_data(lines, source_name):
+          # সোর্স ফাইল থেকে শুধুমাত্র অপশন ও স্ট্রিমিং লিঙ্কের লাইনগুলো নিষ্কাশন করার ফাংশন
+          def extract_streaming_data(lines):
               blocks = {}
-              matched_list = []
               i = 0
               while i < len(lines):
                   line = lines[i]
                   if line.startswith('#EXTINF:'):
                       ch_name = get_channel_name(line)
-                      if ch_name:
-                          norm_name = normalize_name(ch_name)
-                          if norm_name in normalized_targets:
-                              matched_target_name = normalized_targets[norm_name]
-                              stream_lines = []
+                      if ch_name and ch_name in target_channels:
+                          stream_lines = []
+                          i += 1
+                          # #EXTINF এর নিচের #EXTVLCOPT এবং স্ট্রিমিং URL সংগ্রহ
+                          while i < len(lines):
+                              next_line = lines[i]
+                              if next_line.startswith('#EXTINF:'):
+                                  break
+                              if next_line:  # খালি লাইন বাদ দিয়ে
+                                  stream_lines.append(next_line)
                               i += 1
-                              while i < len(lines):
-                                  next_line = lines[i]
-                                  if next_line.startswith('#EXTINF:'):
-                                      break
-                                  if next_line:
-                                      stream_lines.append(next_line)
-                                  i += 1
-                              
-                              if matched_target_name in blocks:
-                                  blocks[matched_target_name].extend(stream_lines)
-                              else:
-                                  blocks[matched_target_name] = stream_lines
-                              
-                              matched_list.append(matched_target_name)
-                              continue
+                          blocks[ch_name] = stream_lines
+                          continue
                   i += 1
-              print(f"📊 {source_name} matched channels: {len(blocks)} ({', '.join(list(set(matched_list))) if matched_list else 'None'})")
               return blocks
 
-          # দুটি সোর্স থেকেই ডাটা সংগ্রহ
-          source1_blocks = extract_streaming_data(source_lines, "Source 1 (CRICHD)")
-          source2_blocks = extract_streaming_data(source2_lines, "Source 2 (CRICHD_2ND)")
+          # দুটি সোর্স থেকেই পৃথকভাবে ডাটা নিষ্কাশন
+          source1_blocks = extract_streaming_data(source_lines)
+          source2_blocks = extract_streaming_data(source2_lines)
 
-          # দুটি সোর্সের ডাটা একই চ্যানেলের নিচে মার্জ করা
+          # কনসোলে বিস্তারিত লগ প্রিন্ট (কোন সোর্স থেকে কী পেলো তা দেখতে পাবেন)
+          print(f"\n📊 --- Source 1 (CRICHD) Extracted Channels ({len(source1_blocks)}) ---")
+          for ch in sorted(source1_blocks.keys()):
+              print(f"  - {ch}")
+
+          print(f"\n📊 --- Source 2 (CRICHD_2ND) Extracted Channels ({len(source2_blocks)}) ---")
+          for ch in sorted(source2_blocks.keys()):
+              print(f"  - {ch}")
+
+          # দুটি সোর্সের ডাটা একই চ্যানেলের আন্ডারে একত্র (merge) করা হচ্ছে
           combined_blocks = {}
           for ch in target_channels:
               combined_lines = []
@@ -145,53 +135,49 @@ jobs:
               if combined_lines:
                   combined_blocks[ch] = combined_lines
 
-          print(f"🔍 Merged blocks prepared for {len(combined_blocks)} channels.")
+          print(f"\n🔍 Combined streaming blocks created for {len(combined_blocks)} channels.")
 
-          # Page template থেকে নতুন প্লেলিস্ট তৈরি করা হচ্ছে
+          # Page template থেকে EXTINF লাইন গুলো প্রসেস করে ফাইনাল প্লেলিস্ট তৈরি
           final_lines = []
           i = 0
           while i < len(page_lines):
               line = page_lines[i]
               if line.startswith('#EXTINF:'):
                   ch_name = get_channel_name(line)
-                  if ch_name:
-                      norm_name = normalize_name(ch_name)
-                      if norm_name in normalized_targets:
-                          matched_target_name = normalized_targets[norm_name]
-                          if matched_target_name in combined_blocks:
-                              # মূল টেমপ্লেটের EXTINF লাইন
-                              final_lines.append(line)
-                              # ১ম ও ২য় সোর্সের কম্বাইনড লিঙ্ক ও অপশনগুলো পরপর বসবে
-                              final_lines.extend(combined_blocks[matched_target_name])
-                              
-                              # টেমপ্লেটের পুরানো লিঙ্ক স্কিপ
-                              i += 1
-                              while i < len(page_lines):
-                                  next_line = page_lines[i]
-                                  if next_line.startswith('#EXTINF:'):
-                                      break
-                                  i += 1
-                              final_lines.append('')
-                              final_lines.append('')
-                              continue
-                  final_lines.append(line)
+                  if ch_name and ch_name in combined_blocks:
+                      # Page এর নিজস্ব আসল EXTINF লাইনটি প্রথমে বসবে
+                      final_lines.append(line)
+                      # এরপর ১ম ও ২য় সোর্স থেকে নেওয়া অপশন ও স্ট্রিমিং লিঙ্কগুলো পরপর বসে যাবে
+                      final_lines.extend(combined_blocks[ch_name])
+                      
+                      # Page-এর নিজস্ব পুরানো অপশন ও স্ট্রিমিং লিঙ্কগুলো স্কিপ করা হচ্ছে
+                      i += 1
+                      while i < len(page_lines):
+                          next_line = page_lines[i]
+                          if next_line.startswith('#EXTINF:'):
+                              break
+                          i += 1
+                      # প্রতি চ্যানেলের ব্লকের পর ফাকা লাইন
+                      final_lines.append('')
+                      final_lines.append('')
+                      continue
+                  else:
+                      final_lines.append(line)
               elif line.startswith('#EXTM3U'):
                   final_lines.append(line)
               i += 1
 
+          # যদি #EXTM3U না থাকে, প্রথমে বসানো
           if final_lines and not final_lines[0].startswith('#EXTM3U'):
               final_lines.insert(0, '#EXTM3U')
 
           content = '\n'.join(final_lines)
           
-          # ফাইল সেভ
+          # আউটপুট ফাইল সংরক্ষণ
           with open('CRICHD.m3u', 'w', encoding='utf-8') as f:
               f.write(content)
           
-          print(f"✅ Playlist generated successfully!")
-          print("📋 Sample Output (First 20 lines):")
-          for line in content.split('\n')[:20]:
-              print(f"  {line}")
+          print(f"✅ Generated playlist: {len(content)} characters, {content.count('#EXTINF:')} entries")
           PYEOF
         env:
           CRICHD_PAGE_URL: ${{ secrets.CRICHD_PAGE }}
@@ -200,12 +186,21 @@ jobs:
 
       - name: Deploy to Pizza Repository
         run: |
+          # Pizza রিপোজিটরি ক্লোন
           git clone https://${{ secrets.PAT_TOKEN }}@github.com/buzzinguaecn/Pizza.git pizza-repo
+          
+          # জেনারেট করা ফাইল কপি
           cp CRICHD.m3u pizza-repo/CRICHD.m3u
+          
           cd pizza-repo
+          
+          # Git কনফিগ
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # কমিট এবং পুশ
           git add CRICHD.m3u
           git diff --staged --quiet || git commit -m "🔄 Auto-update CRICHD playlist [skip ci]"
           git push origin main
+          
           echo "✅ Successfully pushed to buzzinguaecn/Pizza/main/CRICHD.m3u"
