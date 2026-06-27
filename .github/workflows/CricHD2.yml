@@ -1,4 +1,4 @@
-name: CricHD 2
+name: CricHD
 
 on:
   schedule:
@@ -53,7 +53,7 @@ jobs:
               print(f"❌ Failed to download page playlist: {e}")
               exit(1)
 
-          # সোর্স ফাইলগুলো ডাউনলোড করার সাধারণ ফাংশন
+          # সোর্স প্লেলিস্ট ডাউনলোড করার ফাংশন
           def download_playlist(url, name):
               if not url:
                   print(f"⚠️ {name} URL is empty.")
@@ -94,58 +94,71 @@ jobs:
                       return parts[-1].strip()
               return None
 
-          source_blocks = {}
-
-          # সোর্স থেকে ডাটা পার্স করার মূল লজিক (আগের লজিক অপরিবর্তিত রাখা হয়েছে)
-          def parse_source(lines):
+          # সোর্স ফাইল থেকে শুধুমাত্র অপশন ও স্ট্রিমিং লিঙ্কের লাইনগুলো নিষ্কাশন করার ফাংশন
+          def extract_streaming_data(lines):
+              blocks = {}
               i = 0
               while i < len(lines):
                   line = lines[i].strip()
                   if line.startswith('#EXTINF:'):
                       ch_name = get_channel_name(line)
                       if ch_name and ch_name in target_channels:
-                          block_lines = [line]
+                          stream_lines = []
                           i += 1
-                          # #EXTINF এর নিচের #EXTVLCOPT এবং স্ট্রিমিং URL গুলো কালেক্ট
+                          # #EXTINF এর নিচের #EXTVLCOPT এবং স্ট্রিমিং URL গুলো কালেক্ট (নিজস্ব #EXTINF বাদ দিয়ে)
                           while i < len(lines):
                               next_line = lines[i].strip()
                               if next_line.startswith('#EXTINF:'):
                                   break
-                              if next_line:  # খালি লাইন স্কিপ
-                                  block_lines.append(next_line)
+                              if next_line:  # খালি লাইন বাদ দিয়ে
+                                  stream_lines.append(next_line)
                               i += 1
-                          
-                          # যদি চ্যানেলটি পূর্বে (যেমন ১ম সোর্স থেকে) যুক্ত না হয়ে থাকে, তবেই এটি যুক্ত হবে
-                          if ch_name not in source_blocks:
-                              source_blocks[ch_name] = '\n'.join(block_lines)
+                          blocks[ch_name] = stream_lines
                           continue
                   i += 1
+              return blocks
 
-          # দুটি সোর্স থেকেই ডাটা পার্স করা হচ্ছে (১ম সোর্স অগ্রাধিকার পাবে)
-          parse_source(source_lines)
-          parse_source(source2_lines)
+          # দুটি সোর্স থেকেই পৃথকভাবে ডাটা নিষ্কাশন করা হচ্ছে
+          source1_blocks = extract_streaming_data(source_lines)
+          source2_blocks = extract_streaming_data(source2_lines)
 
-          print(f"🔍 Found {len(source_blocks)} matching channels in combined sources")
+          # দুটি সোর্সের ডাটা একত্র (merge) করা হচ্ছে
+          combined_blocks = {}
+          for ch in target_channels:
+              combined_lines = []
+              # ১ম সোর্সের ডাটা যোগ করা হচ্ছে (যদি থাকে)
+              if ch in source1_blocks:
+                  combined_lines.extend(source1_blocks[ch])
+              # ২য় সোর্সের ডাটা নিচে যোগ করা হচ্ছে (যদি থাকে)
+              if ch in source2_blocks:
+                  combined_lines.extend(source2_blocks[ch])
+              
+              if combined_lines:
+                  combined_blocks[ch] = combined_lines
 
-          # Page playlist থেকে EXTINF লাইন গুলো প্রসেস করে ফাইনাল প্লেলিস্ট তৈরি (আগের লজিক)
+          print(f"🔍 Merged streaming data for {len(combined_blocks)} target channels.")
+
+          # Page playlist থেকে EXTINF লাইন গুলো প্রসেস করে ফাইনাল প্লেলিস্ট তৈরি
           final_lines = []
           i = 0
           while i < len(page_lines):
               line = page_lines[i].strip()
               if line.startswith('#EXTINF:'):
                   ch_name = get_channel_name(line)
-                  if ch_name and ch_name in source_blocks:
-                      # Page এর EXTINF লাইন + সোর্স থেকে স্ট্রিমিং ব্লক
+                  if ch_name and ch_name in combined_blocks:
+                      # Page এর নিজস্ব আসল EXTINF লাইনটি প্রথমে বসবে
                       final_lines.append(line)
-                      final_lines.append(source_blocks[ch_name].split('\n', 1)[1] if '\n' in source_blocks[ch_name] else '')
-                      # #EXTINF এর পরের লাইনগুলো স্কিপ (যেগুলো সোর্স থেকে বসানো হয়েছে সেগুলো বাদে)
+                      # এরপর ১ম ও ২য় সোর্স থেকে নেওয়া অপশন ও স্ট্রিমিং লিঙ্কগুলো পরপর বসবে
+                      final_lines.extend(combined_blocks[ch_name])
+                      
+                      # Page-এর নিজস্ব পুরানো অপশন ও স্ট্রিমিং লিঙ্কগুলো স্কিপ করা হচ্ছে
                       i += 1
                       while i < len(page_lines):
                           next_line = page_lines[i].strip()
                           if next_line.startswith('#EXTINF:'):
                               break
                           i += 1
-                      # গ্যাপ (২ লাইন)
+                      # প্রতি চ্যানেলের ব্লকের পর ফাকা লাইন
                       final_lines.append('')
                       final_lines.append('')
                       continue
@@ -166,14 +179,14 @@ jobs:
               f.write(content)
           
           print(f"✅ Generated playlist: {len(content)} characters, {content.count('#EXTINF:')} entries")
-          print("📋 First 15 lines of output:")
-          for line in content.split('\n')[:15]:
+          print("📋 First 25 lines of output:")
+          for line in content.split('\n')[:25]:
               print(f"  {line}")
           PYEOF
         env:
           CRICHD_PAGE_URL: ${{ secrets.CRICHD_PAGE }}
           CRICHD_SOURCE_URL: ${{ secrets.CRICHD }}
-          CRICHD_SOURCE2_URL: ${{ secrets.CRICHD_2ND }} # ২য় সোর্সের জন্য নতুন সিক্রেট যুক্ত করা হয়েছে
+          CRICHD_SOURCE2_URL: ${{ secrets.CRICHD_2ND }}
 
       - name: Deploy to Pizza Repository
         run: |
