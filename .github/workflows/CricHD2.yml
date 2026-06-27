@@ -29,42 +29,59 @@ jobs:
           import requests
           import os
 
-          # সিক্রেট থেকে URL গুলো নেওয়া এবং আগে-পিছে থাকা অতিরিক্ত স্পেস (.strip()) ক্লিন করা
-          page_url = os.environ.get('CRICHD_PAGE_URL')
-          source_url = os.environ.get('CRICHD_SOURCE_URL')
-          source2_url = os.environ.get('CRICHD_SOURCE2_URL')
+          # ইউআরএল থেকে কোটেশন, স্পেস এবং অদৃশ্য ক্যারেক্টার ফিল্টার করার ফাংশন
+          def clean_url(url):
+              if not url:
+                  return ""
+              # ১. স্পেস, ট্যাব, নিউলাইন এবং কোটেশন মার্ক (", ') ট্রিম করা
+              cleaned = url.strip(" \t\n\r\"'")
+              # ২. অদৃশ্য ইউনিকোড ক্যারেক্টার ফিল্টার করে শুধুমাত্র স্ট্যান্ডার্ড ইউআরএল ক্যারেক্টার রাখা
+              cleaned = "".join(c for c in cleaned if 32 < ord(c) < 127)
+              return cleaned
 
-          if page_url:
-              page_url = page_url.strip()
-          if source_url:
-              source_url = source_url.strip()
-          if source2_url:
-              source2_url = source2_url.strip()
+          # সিক্রেট থেকে URL গুলো নেওয়া এবং ক্লিন করা
+          page_url = clean_url(os.environ.get('CRICHD_PAGE_URL'))
+          source_url = clean_url(os.environ.get('CRICHD_SOURCE_URL'))
+          source2_url = clean_url(os.environ.get('CRICHD_SOURCE2_URL'))
 
-          # কঠোর নিরাপত্তা চেক (কোনো সিক্রেট মিসিং থাকলে রান ফেইল হবে)
+          # কঠোর নিরাপত্তা ও ফরম্যাট চেক
           if not page_url:
-              print("❌ Error: Secret 'CRICHD_PAGE' (CRICHD_PAGE_URL) is missing or empty!")
+              print("❌ Error: Secret 'CRICHD_PAGE' (CRICHD_PAGE_URL) is missing!")
               exit(1)
           if not source_url:
-              print("❌ Error: Secret 'CRICHD' (CRICHD_SOURCE_URL) is missing or empty!")
+              print("❌ Error: Secret 'CRICHD' (CRICHD_SOURCE_URL) is missing!")
               exit(1)
           if not source2_url:
-              print("❌ Error: Secret 'CRICHD_2ND' (CRICHD_SOURCE2_URL) is missing or empty!")
-              print("👉 Please make sure you have added 'CRICHD_2ND' in your GitHub Repository Secrets.")
+              print("❌ Error: Secret 'CRICHD_2ND' (CRICHD_SOURCE2_URL) is missing!")
               exit(1)
 
-          # প্লেলিস্ট ডাউনলোড ও লাইন ক্লিন করার ফাংশন
+          # ডায়াগনস্টিক চেক (লিংকটি সঠিক ফরম্যাটে আছে কি না যাচাই করা)
+          def validate_url_scheme(url, secret_name):
+              if not (url.startswith("http://") or url.startswith("https://")):
+                  print(f"❌ Error: {secret_name} URL is malformed! It must start with 'http://' or 'https://'.")
+                  # নিরাপত্তার স্বার্থে পুরো লিংক প্রকাশ না করে শুধুমাত্র প্রথম ১০টি ক্যারেক্টার প্রিন্ট করা হচ্ছে সমস্যা ধরতে
+                  print(f"👉 Your Secret '{secret_name}' starts with: '{url[:10]}...' (Total Length: {len(url)})")
+                  exit(1)
+
+          validate_url_scheme(page_url, "CRICHD_PAGE")
+          validate_url_scheme(source_url, "CRICHD")
+          validate_url_scheme(source2_url, "CRICHD_2ND")
+
+          print(f"📥 Page playlist URL verified")
+          print(f"📥 Source 1 playlist URL verified")
+          print(f"📥 Source 2 playlist URL verified")
+
+          # প্লেলিস্ট ডাউনলোড করার ফাংশন
           def download_playlist(url, name):
               try:
                   resp = requests.get(url, timeout=30)
                   resp.raise_for_status()
-                  # \r দূর করে লাইনগুলো ক্লিন করা হচ্ছে
                   lines = [line.strip().replace('\r', '') for line in resp.text.split('\n')]
                   print(f"✅ {name} downloaded successfully: {len(lines)} lines")
                   return lines
               except Exception as e:
                   print(f"❌ Error: Failed to download {name} from URL: {e}")
-                  exit(1) # ডাউনলোড ব্যর্থ হলে রান বন্ধ হয়ে যাবে
+                  exit(1)
 
           page_lines = download_playlist(page_url, "Page template")
           source_lines = download_playlist(source_url, "Source 1")
@@ -121,7 +138,7 @@ jobs:
           source1_blocks = extract_streaming_data(source_lines)
           source2_blocks = extract_streaming_data(source2_lines)
 
-          # কনসোলে বিস্তারিত লগ প্রিন্ট (কোন সোর্স থেকে কী পেলো তা দেখতে পাবেন)
+          # কনসোলে বিস্তারিত লগ প্রিন্ট
           print(f"\n📊 --- Source 1 (CRICHD) Extracted Channels ({len(source1_blocks)}) ---")
           for ch in sorted(source1_blocks.keys()):
               print(f"  - {ch}")
