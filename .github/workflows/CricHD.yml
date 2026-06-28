@@ -73,7 +73,9 @@ jobs:
               "Sky Sports F1", "LaLiGA", "Premier Sports 1", "Premier Sports 2",
               "Super Football", "Super Premier League", "Fox Cricket 501 HD",
               "ESPN 1", "ESPN 2", "Sky Sports Mix", "Sky Sports Tennis",
-              "Sony Sports3"
+              "Sony Sports3",
+
+              "Sky Sports Cricket", "Sky Sports Football", "Sky Sports Golf", "Sky Sports Action", "Sky Sports Main Event", "Sky Sports News", "Sky Sports Tennis", "Sky Sports Mix", "Sky Sports Premier League", "Sky Sports F1", "TNT Sports 3", "TNT Sports 4", "TNT Sports 1", "Viaplay Sports 1 UK", "TNT Sports 2", "PTV Sports", "Viaplay Sports 2 UK", "LaLiga TV UK", "Star Sports 1", "Willow Cricket", "A Sports HD", "Ten Sports", "Willow Cricket Extra", "ESPN US", "Sky Sport 1 NZ", "ESPN 2 US", "Star Sports 1 Hindi", "Sky Sport 3 NZ", "Sky Sport 2 NZ", "Sky Sport 4 NZ", "Sky Sport 7 NZ", "Sky Sport 5 NZ", "Sky Sport 6 NZ", "Sky Sport 9 NZ", "Fox Deportes", "Sky Sport 8 NZ", "BeIn Sports USA", "Fox Sports 2 US", "Movistar #Vamos", "TUDN USA", "BeIn Sports HD 1 France", "Fox Sports 1 US", "Telemundo", "Movistar Deportes", "NBC", "DAZN 1 Spain", "DAZN 2 Spain", "DAZN 3 Spain", "BBC One", "DAZN 4 Spain", "LaLiga TV Hypermotion", "ITV 1", "BBC Two", "ITV4", "LaLiga TV Hypermotion 2", "Fox Soccer Plus", "Disney+ SP", "ESPN Deportes"
           ]
 
           # Helper function to get channel name from EXTINF line
