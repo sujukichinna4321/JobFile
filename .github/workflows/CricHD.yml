@@ -2,8 +2,8 @@ name: CricHD
 
 on:
   schedule:
-    - cron: '*/5 * * * *'  # প্রতি ৫ মিনিট পর পর রান হবে
-  workflow_dispatch:  # ম্যানুয়ালি রান করার অপশন
+    - cron: '*/5 * * * *'  # يتم التشغيل كل 5 دقائق
+  workflow_dispatch:  # خيار التشغيل اليدوي
 
 jobs:
   update-playlist:
@@ -30,7 +30,7 @@ jobs:
           import re
           import os
 
-          # সিক্রেট থেকে URL গুলো নেওয়া
+          # الحصول على روابط URL من الأسرار (Secrets)
           page_url = os.environ.get('CRICHD_PAGE_URL')
           source_url = os.environ.get('CRICHD_SOURCE_URL')
 
@@ -41,7 +41,7 @@ jobs:
           print(f"📥 Page playlist: {page_url}")
           print(f"📥 Source playlist: {source_url}")
 
-          # CRICHD_PAGE ডাউনলোড
+          # تحميل صفحة CRICHD_PAGE
           try:
               page_resp = requests.get(page_url, timeout=30)
               page_resp.raise_for_status()
@@ -51,7 +51,7 @@ jobs:
               print(f"❌ Failed to download page playlist: {e}")
               exit(1)
 
-          # CRICHD সোর্স ডাউনলোড
+          # تحميل مصدر CRICHD
           try:
               source_resp = requests.get(source_url, timeout=30)
               source_resp.raise_for_status()
@@ -61,31 +61,34 @@ jobs:
               print(f"❌ Failed to download source playlist: {e}")
               exit(1)
 
-          # চ্যানেলের নাম গুলো (ম্যাচ করার জন্য)
+          # أسماء القنوات المستهدفة للمطابقة
           target_channels = [
-              "Star Sports 1", "Star Sports 1 Hindi", "PTV Sports",
-              "Willow HD", "Willow HD 2", "Ten Sports", "A Sports HD",
-              "Sky Sports Cricket", "Sky Cinema", "TNT 1", "TNT 2", "TNT 3", "TNT 4",
-              "Sky Sport Nz 1", "Sky Sport Nz 2", "Sky Sport Nz 3", "Sky Sport Nz 4",
-              "Sky Sport Nz 5", "Sky Sport 6 Nz", "Sky Sport Nz 7", "Sky Sport Nz 8",
-              "Sky Sport Nz 9", "Sky Sports Action", "Sky Sports Golf",
-              "Sky Sports Premier League", "Sky Sports Football", "Sky Sports Arena",
-              "Sky Sports F1", "LaLiGA", "Premier Sports 1", "Premier Sports 2",
-              "Super Football", "Super Premier League", "Fox Cricket 501 HD",
-              "ESPN 1", "ESPN 2", "Sky Sports Mix", "Sky Sports Tennis",
-              "Sony Sports3"
+              "Sky Sports Cricket", "Sky Sports Football", "Sky Sports Golf", "Sky Sports Action",
+              "Sky Sports Main Event", "Sky Sports News", "Sky Sports Tennis", "Sky Sports Mix",
+              "Sky Sports Premier League", "Sky Sports F1", "TNT Sports 3", "TNT Sports 4",
+              "TNT Sports 1", "Viaplay Sports 1 UK", "TNT Sports 2", "PTV Sports",
+              "Viaplay Sports 2 UK", "LaLiga TV UK", "Star Sports 1", "Willow Cricket",
+              "A Sports HD", "Ten Sports", "Willow Cricket Extra", "ESPN US", "Sky Sport 1 NZ",
+              "ESPN 2 US", "Star Sports 1 Hindi", "Sky Sport 3 NZ", "Sky Sport 2 NZ",
+              "Sky Sport 4 NZ", "Sky Sport 7 NZ", "Sky Sport 5 NZ", "Sky Sport 6 NZ",
+              "Sky Sport 9 NZ", "Fox Deportes", "Sky Sport 8 NZ", "BeIn Sports USA",
+              "Fox Sports 2 US", "Movistar #Vamos", "TUDN USA", "BeIn Sports HD 1 France",
+              "Fox Sports 1 US", "Telemundo", "Movistar Deportes", "NBC", "DAZN 1 Spain",
+              "DAZN 2 Spain", "DAZN 3 Spain", "BBC One", "DAZN 4 Spain", "LaLiga TV Hypermotion",
+              "ITV 1", "BBC Two", "ITV4", "LaLiga TV Hypermotion 2", "Fox Soccer Plus",
+              "Disney+ SP", "ESPN Deportes"
           ]
 
-          # Helper function to get channel name from EXTINF line
+          # دالة مساعدة للحصول على اسم القناة من سطر EXTINF
           def get_channel_name(line):
               if line.startswith('#EXTINF:'):
-                  # শেষ কমার পরের অংশ চ্যানেলের নাম
+                  # الاسم بعد آخر فاصلة هو اسم القناة
                   parts = line.split(',')
                   if len(parts) > 1:
                       return parts[-1].strip()
               return None
 
-          # Source playlist পার্স করে চ্যানেল অনুযায়ী ব্লক বানানো
+          # تحليل قائمة تشغيل المصدر وإنشاء كتل بناءً على القنوات
           source_blocks = {}
           i = 0
           while i < len(source_lines):
@@ -95,12 +98,12 @@ jobs:
                   if ch_name and ch_name in target_channels:
                       block_lines = [line]
                       i += 1
-                      # #EXTINF এর নিচের #EXTVLCOPT এবং স্ট্রিমিং URL গুলো কালেক্ট
+                      # جمع خيارات EXTVLCOPT وروابط البث أسفل EXTINF
                       while i < len(source_lines):
                           next_line = source_lines[i].strip()
                           if next_line.startswith('#EXTINF:'):
                               break
-                          if next_line:  # খালি লাইন স্কিপ
+                          if next_line:  # تخطي السطور الفارغة
                               block_lines.append(next_line)
                           i += 1
                       source_blocks[ch_name] = '\n'.join(block_lines)
@@ -109,7 +112,7 @@ jobs:
 
           print(f"🔍 Found {len(source_blocks)} matching channels in source")
 
-          # Page playlist থেকে EXTINF লাইন গুলো প্রসেস করে ফাইনাল প্লেলিস্ট তৈরি
+          # معالجة سطور EXTINF من قائمة تشغيل الصفحة لتوليد قائمة التشغيل النهائية
           final_lines = []
           i = 0
           while i < len(page_lines):
@@ -117,17 +120,17 @@ jobs:
               if line.startswith('#EXTINF:'):
                   ch_name = get_channel_name(line)
                   if ch_name and ch_name in source_blocks:
-                      # Page এর EXTINF লাইন + সোর্স থেকে স্ট্রিমিং ব্লক
+                      # سطر EXTINF الخاص بالصفحة مع كتلة البث من المصدر
                       final_lines.append(line)
                       final_lines.append(source_blocks[ch_name].split('\n', 1)[1] if '\n' in source_blocks[ch_name] else '')
-                      # #EXTINF এর পরের লাইনগুলো স্কিপ (যেগুলো সোর্স থেকে বসানো হয়েছে সেগুলো বাদে)
+                      # تخطي السطور التالية لـ EXTINF باستثناء السطور المستبدلة
                       i += 1
                       while i < len(page_lines):
                           next_line = page_lines[i].strip()
                           if next_line.startswith('#EXTINF:'):
                               break
                           i += 1
-                      # গ্যাপ (২ লাইন)
+                      # إضافة سطرين فارغين
                       final_lines.append('')
                       final_lines.append('')
                       continue
@@ -137,13 +140,13 @@ jobs:
                   final_lines.append(line)
               i += 1
 
-          # যদি #EXTM3U না থাকে, প্রথমে বসানো
+          # إضافة علامة EXTM3U في البداية إذا لم تكن موجودة
           if final_lines and not final_lines[0].startswith('#EXTM3U'):
               final_lines.insert(0, '#EXTM3U')
 
           content = '\n'.join(final_lines)
           
-          # আউটপুট ফাইল সংরক্ষণ
+          # حفظ ملف المخرجات
           with open('CRICHD.m3u', 'w', encoding='utf-8') as f:
               f.write(content)
           
@@ -158,19 +161,19 @@ jobs:
 
       - name: Deploy to Pizza Repository
         run: |
-          # Pizza রিপোজিটরি ক্লোন
+          # استنساخ مستودع Pizza
           git clone https://${{ secrets.PAT_TOKEN }}@github.com/buzzinguaecn/Pizza.git pizza-repo
           
-          # জেনারেট করা ফাইল কপি
+          # نسخ الملف المولد
           cp CRICHD.m3u pizza-repo/CRICHD.m3u
           
           cd pizza-repo
           
-          # Git কনফিগ
+          # تهيئة إعدادات Git
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # কমিট এবং পুশ
+          # إرسال التعديلات ودفعها
           git add CRICHD.m3u
           git diff --staged --quiet || git commit -m "🔄 Auto-update CRICHD playlist [skip ci]"
           git push origin main
