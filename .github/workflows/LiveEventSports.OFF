@@ -1,8 +1,8 @@
 name: Auto Update IPTV Playlist
 on:
   schedule:
-    - cron: '*/5 * * * *' # প্রতি ৫ মিনিট পর পর স্বয়ংক্রিয়ভাবে চলবে
-  workflow_dispatch: # কোনো ইনপুট ছাড়াই সরাসরি ম্যানুয়াল রান করার জন্য
+    - cron: '*/5 * * * *' 
+  workflow_dispatch: 
 
 jobs:
   update-playlist:
@@ -120,7 +120,7 @@ jobs:
               elif "cricket" in og_lower:
                   return "SAWARID سواريد - Cricket"
               
-              # অন্যান্য গ্রুপের জন্য প্রথম অক্ষর ক্যাপিটাল করে প্রিপেন্ড করা
+             
               parts = og_clean.split()
               capitalized_group = " ".join([p.capitalize() for p in parts])
               return f"SAWARID سواريد - {capitalized_group}"
