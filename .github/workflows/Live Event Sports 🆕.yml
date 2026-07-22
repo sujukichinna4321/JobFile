@@ -1,4 +1,4 @@
-name: Auto Update IPTV Playlist
+name: Live Event Sports 🆕
 on:
   schedule:
     - cron: '*/5 * * * *' 
