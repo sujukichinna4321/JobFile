@@ -1,0 +1,343 @@
+name: Auto Update IPTV Playlist
+on:
+  schedule:
+    - cron: '*/5 * * * *' # প্রতি ৫ মিনিট পর পর স্বয়ংক্রিয়ভাবে চলবে
+  workflow_dispatch: # কোনো ইনপুট ছাড়াই সরাসরি ম্যানুয়াল রান করার জন্য
+
+jobs:
+  update-playlist:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Dependencies
+        run: |
+          pip install requests
+
+      - name: Run Update Script
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          SOURCE_TAMPAD: ${{ secrets.SOURCE_TAMPAD }}
+          SOURCE_BINGSTREAM: ${{ secrets.SOURCE_BINGSTREAM }}
+          SOURCE_SONYLIV: ${{ secrets.SOURCE_SONYLIV }}
+          SOURCE_AX: ${{ secrets.SOURCE_AX }}
+          SOURCE_FANCODEBD: ${{ secrets.SOURCE_FANCODEBD }}
+          MAPPING_ALL_TV: ${{ secrets.MAPPING_ALL_TV }}
+          MAPPING_ROARZONE: ${{ secrets.MAPPING_ROARZONE }}
+          MAPPING_AYNA: ${{ secrets.MAPPING_AYNA }}
+          LOCAL_SOURCE_URL: ${{ secrets.LOCAL_SOURCE_URL }}
+        run: |
+          cat << 'EOF' > update_playlist.py
+          import os
+          import re
+          import requests
+          from collections import defaultdict
+          from datetime import datetime, timedelta, timezone
+
+          # Configurations (Fetched from environment variables)
+          SOURCE_PLAYLISTS = [
+              {"url": os.getenv("SOURCE_SONYLIV", "")},
+              {"url": os.getenv("SOURCE_TAMPAD", "")},
+              {"url": os.getenv("SOURCE_BINGSTREAM", "")},
+              {"url": os.getenv("SOURCE_AX", "")},
+              {"url": os.getenv("SOURCE_FANCODEBD", "")}
+          ]
+          # Filter out empty entries if any secret is not set
+          SOURCE_PLAYLISTS = [sp for sp in SOURCE_PLAYLISTS if sp["url"]]
+
+          MAPPING_PLAYLISTS = [
+              os.getenv("MAPPING_ALL_TV", ""),
+              os.getenv("MAPPING_ROARZONE", ""),
+              os.getenv("MAPPING_AYNA", "")
+          ]
+          # Filter out empty entries
+          MAPPING_PLAYLISTS = [mp for mp in MAPPING_PLAYLISTS if mp]
+
+          LOCAL_SOURCE_URL = os.getenv("LOCAL_SOURCE_URL", "")
+
+          CHANNEL_MAPPING = {
+              "T Sports": ["T Sports", "TSports", "T SPORTS", "T Sports HD"],
+              "TALK SPORT": ["TALK SPORT", "Talk Sports"],
+              "Willow Sports": ["Willow Sports", "Willow", "Willow HD"],
+              "PTV Sports": ["PTV Sports", "P TV Sports", "PTV Sports HD"],
+              "A Sports": ["A Sports", "A Sports HD"],
+          }
+
+          def parse_blocks(content):
+              blocks = []
+              lines = content.split('\n')
+              current_block = []
+              for line in lines:
+                  if line.strip().startswith('#EXTINF:'):
+                      if current_block:
+                          blocks.append(current_block)
+                      current_block = [line]
+                  elif current_block:
+                      current_block.append(line)
+              if current_block:
+                  blocks.append(current_block)
+              return blocks
+
+          def get_block_info(block):
+              extinf_line = block[0]
+              group = ""
+              group_match = re.search(r'group-title="([^"]+)"', extinf_line)
+              if group_match:
+                  group = group_match.group(1)
+              
+              name = ""
+              comma_idx = extinf_line.rfind(',')
+              if comma_idx != -1:
+                  name = extinf_line[comma_idx+1:].strip()
+              
+              urls = []
+              for line in block[1:]:
+                  line_strip = line.strip()
+                  if not line_strip:
+                      continue
+                  if line_strip.startswith('#'):
+                      potential_url = line_strip.lstrip('#').strip()
+                      if potential_url.startswith('http://') or potential_url.startswith('https://'):
+                          urls.append(line_strip)
+                  elif line_strip.startswith('http://') or line_strip.startswith('https://'):
+                      urls.append(line_strip)
+              return {'extinf': extinf_line, 'group': group, 'name': name, 'urls': urls}
+
+          def get_normalized_group(original_group):
+              og_clean = original_group.strip()
+              if not og_clean:
+                  return "SAWARID سواريد - Sports"
+              
+              og_lower = og_clean.lower()
+              if "football" in og_lower:
+                  return "SAWARID سواريد - Football"
+              elif "cricket" in og_lower:
+                  return "SAWARID سواريد - Cricket"
+              
+              # অন্যান্য গ্রুপের জন্য প্রথম অক্ষর ক্যাপিটাল করে প্রিপেন্ড করা
+              parts = og_clean.split()
+              capitalized_group = " ".join([p.capitalize() for p in parts])
+              return f"SAWARID سواريد - {capitalized_group}"
+
+          def group_sort_key(group_name):
+              g_lower = group_name.lower()
+              if "football" in g_lower:
+                  return (0, group_name)
+              elif "cricket" in g_lower:
+                  return (1, group_name)
+              else:
+                  return (2, group_name)
+
+          # Setup local and destination repository
+          pat_token = os.getenv("PAT_TOKEN")
+          os.system(f"git clone https://x-access-token:{pat_token}@github.com/buzzinguaecn/Pizza.git pizza-repo")
+
+          # 1. Parse Mapping Source Playlists
+          mapped_channels_data = {}
+          for url in MAPPING_PLAYLISTS:
+              try:
+                  r = requests.get(url, timeout=15)
+                  if r.status_code == 200:
+                      blocks = parse_blocks(r.text)
+                      for b in blocks:
+                          info = get_block_info(b)
+                          channel_name_mapped = info['name'].strip()
+                          active_urls = [u.strip() for u in info['urls'] if not u.strip().startswith('#')]
+                          if active_urls:
+                              if channel_name_mapped not in mapped_channels_data:
+                                  mapped_channels_data[channel_name_mapped] = []
+                              for u in active_urls:
+                                  if u not in mapped_channels_data[channel_name_mapped]:
+                                      mapped_channels_data[channel_name_mapped].append(u)
+              except Exception as e:
+                  print(f"Error loading mapping playlist {url}: {e}")
+
+          def get_mapped_urls_for_channel(local_name):
+              matched_key = None
+              for key in CHANNEL_MAPPING:
+                  if key.lower() == local_name.lower().strip():
+                      matched_key = key
+                      break
+              if not matched_key:
+                  return []
+              
+              keywords = CHANNEL_MAPPING[matched_key]
+              collected_urls = []
+              for mapped_name, urls in mapped_channels_data.items():
+                  for kw in keywords:
+                      if kw.lower() == mapped_name.lower().strip() or kw.lower() in mapped_name.lower():
+                          for u in urls:
+                              if u not in collected_urls:
+                                  collected_urls.append(u)
+              return collected_urls
+
+          # 2. Parse all Source Playlists channels and Group them
+          all_source_channels = []
+          for sp in SOURCE_PLAYLISTS:
+              try:
+                  r = requests.get(sp['url'], timeout=15)
+                  if r.status_code == 200:
+                      blocks = parse_blocks(r.text)
+                      for b in blocks:
+                          info = get_block_info(b)
+                          new_group = get_normalized_group(info['group'])
+                          
+                          # Update group-title in extinf line
+                          extinf = info['extinf']
+                          if 'group-title="' in extinf:
+                              extinf = re.sub(r'group-title="[^"]*"', f'group-title="{new_group}"', extinf)
+                          else:
+                              comma_idx = extinf.rfind(',')
+                              if comma_idx != -1:
+                                  extinf = extinf[:comma_idx] + f' group-title="{new_group}"' + extinf[comma_idx:]
+                          
+                          updated_lines = [extinf] + b[1:]
+                          all_source_channels.append({
+                              'group': new_group,
+                              'lines': updated_lines
+                          })
+              except Exception as e:
+                  print(f"Error loading source playlist {sp['url']}: {e}")
+
+          grouped_source_data = defaultdict(list)
+          for ch in all_source_channels:
+              grouped_source_data[ch['group']].append(ch['lines'])
+
+          sorted_groups = sorted(grouped_source_data.keys(), key=group_sort_key)
+
+          # 3. Parse Local gh-pages playlist
+          try:
+              r = requests.get(LOCAL_SOURCE_URL, timeout=15)
+              local_content = r.text
+          except Exception as e:
+              print(f"Error loading local source playlist: {e}")
+              exit(1)
+
+          # Parse header up to first #EXTINF
+          header_lines = []
+          for line in local_content.split('\n'):
+              if line.strip().startswith('#EXTINF:'):
+                  break
+              header_lines.append(line)
+          
+          while header_lines and not header_lines[-1].strip():
+              header_lines.pop()
+
+          # Force header length to be exactly 49 lines for starting insertion at line 50
+          current_len = len(header_lines)
+          if current_len < 49:
+              padding_needed = 49 - current_len
+              for _ in range(padding_needed):
+                  header_lines.append("#")
+          else:
+              header_lines = header_lines[:49]
+          header_text = "\n".join(header_lines)
+
+          # Parse and map local blocks
+          local_blocks = parse_blocks(local_content)
+          local_processed_blocks = []
+          timestamp = (datetime.now(timezone.utc) + timedelta(hours=6)).strftime('%Y-%m-%d %H:%M:%S')
+
+          for b in local_blocks:
+              info = get_block_info(b)
+              channel_name = info['name']
+              mapped_urls = get_mapped_urls_for_channel(channel_name)
+              
+              existing_urls = info['urls']
+              existing_urls_clean = [u.lstrip('#').strip() for u in existing_urls]
+              
+              new_urls_to_prepend = []
+              has_skipped = False
+              
+              for m_url in mapped_urls:
+                  m_url_clean = m_url.strip()
+                  if m_url_clean in existing_urls_clean:
+                      has_skipped = True
+                  else:
+                      new_urls_to_prepend.append(m_url_clean)
+              
+              new_block_lines = [info['extinf']]
+              if has_skipped:
+                  skip_message = f"#AUTO-UPDATED - {channel_name} ⛔ SKIPPED ⛔ - {timestamp} 🟡 - 🔄 - 🔴"
+                  new_block_lines.append(skip_message)
+              elif len(new_urls_to_prepend) > 0:
+                  update_message = f"#AUTO-UPDATED - {channel_name} ✅- {timestamp} 🟡 - 🔄 - 🔴"
+                  new_block_lines.append(update_message)
+              
+              for u in new_urls_to_prepend:
+                  new_block_lines.append(u)
+              
+              for line in b[1:]:
+                  line_strip = line.strip()
+                  if not line_strip:
+                      continue
+                  new_block_lines.append(line)
+                  potential_url = line_strip.lstrip('#').strip()
+                  if potential_url.startswith('http://') or potential_url.startswith('https://'):
+                      if potential_url in [m.strip() for m in mapped_urls]:
+                          new_block_lines.append("# 🔴 Duplicate Link Found 🔴")
+              
+              local_processed_blocks.append("\n".join([l for l in new_block_lines if l.strip()]))
+
+          # 4. Compile output content
+          content_parts = []
+          source_parts = []
+          for g_name in sorted_groups:
+              g_content = []
+              g_content.append("# 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴")
+              g_content.append(f"# 🟢🟢🟢🟢🟢🟢 {g_name} 🟢🟢🟢🟢🟢🟢")
+              
+              block_strings = []
+              for b in grouped_source_data[g_name]:
+                  block_strings.append("\n".join([line for line in b if line.strip()]))
+              g_content.append("\n\n\n".join(block_strings))
+              
+              g_content.append(f"# 🆕 {g_name} 👉 Updateded Done ✅✅✅✅✅✅")
+              source_parts.append("\n\n\n".join(g_content))
+
+          if source_parts:
+              content_parts.append("\n\n\n".join(source_parts))
+          
+          content_parts.append("# 🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡 Local Channel Updated  🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡")
+          content_parts.append("\n\n\n".join(local_processed_blocks))
+
+          rest_of_content = "\n\n\n".join(content_parts)
+          final_text = header_text + "\n" + rest_of_content
+
+          # Write results to output file
+          output_path = "pizza-repo/LiveEventSports.m3u"
+          with open(output_path, "w", encoding="utf-8") as f:
+              f.write(final_text)
+          EOF
+          python update_playlist.py
+
+      - name: Commit and Push Changes
+        run: |
+          cd pizza-repo
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes found. Commit skipped."
+          else
+            # Get current Bangladesh time (BST / UTC+6)
+            CURRENT_TIME=$(date -u -d "+6 hours" +"%Y-%m-%d %H:%M:%S")
+            
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              # Manual Trigger Message
+              COMMIT_MESSAGE="🆗 Live Event Sports : 🆕 Start Done ✅ - $CURRENT_TIME 🟡"
+            else
+              # Scheduled Trigger Message
+              COMMIT_MESSAGE="🆗 Live Event Sports : 🔄 Updated Done ✅ - $CURRENT_TIME 🟡"
+            fi
+            
+            git add LiveEventSports.m3u
+            git commit -m "$COMMIT_MESSAGE"
+            git push origin main
+          fi
