@@ -1,8 +1,8 @@
 name: Auto Update IPTV Playlist
 on:
   schedule:
-    - cron: '*/5 * * * *' # প্রতি ৫ মিনিট পর পর স্বয়ংক্রিয়ভাবে চলবে
-  workflow_dispatch: # কোনো ইনপুট ছাড়াই সরাসরি ম্যানুয়াল রান করার জন্য
+    - cron: '*/5 * * * *' 
+  workflow_dispatch: 
 
 jobs:
   update-playlist:
@@ -24,9 +24,9 @@ jobs:
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
           SOURCE_TAMPAD: ${{ secrets.SOURCE_TAMPAD }}
-          SOURCE_BINGSTREAM: ${{ secrets.SOURCE_BINGSTREAM }}
+          # SOURCE_BINGSTREAM: ${{ secrets.SOURCE_BINGSTREAM }}
           SOURCE_SONYLIV: ${{ secrets.SOURCE_SONYLIV }}
-          SOURCE_AX: ${{ secrets.SOURCE_AX }}
+          # SOURCE_AX: ${{ secrets.SOURCE_AX }}
           SOURCE_FANCODEBD: ${{ secrets.SOURCE_FANCODEBD }}
           MAPPING_ALL_TV: ${{ secrets.MAPPING_ALL_TV }}
           MAPPING_ROARZONE: ${{ secrets.MAPPING_ROARZONE }}
@@ -44,8 +44,8 @@ jobs:
           SOURCE_PLAYLISTS = [
               {"url": os.getenv("SOURCE_SONYLIV", "")},
               {"url": os.getenv("SOURCE_TAMPAD", "")},
-              {"url": os.getenv("SOURCE_BINGSTREAM", "")},
-              {"url": os.getenv("SOURCE_AX", "")},
+              # {"url": os.getenv("SOURCE_BINGSTREAM", "")},
+              # {"url": os.getenv("SOURCE_AX", "")},
               {"url": os.getenv("SOURCE_FANCODEBD", "")}
           ]
           # Filter out empty entries if any secret is not set
