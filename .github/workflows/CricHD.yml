@@ -76,7 +76,18 @@ jobs:
               "Fox Sports 1 US", "Telemundo", "Movistar Deportes", "NBC", "DAZN 1 Spain",
               "DAZN 2 Spain", "DAZN 3 Spain", "BBC One", "DAZN 4 Spain", "LaLiga TV Hypermotion",
               "ITV 1", "BBC Two", "ITV4", "LaLiga TV Hypermotion 2", "Fox Soccer Plus",
-              "Disney+ SP", "ESPN Deportes"
+              "Disney+ SP", "ESPN Deportes",
+              "Star Sports 1", "Star Sports 1 Hindi", "PTV Sports", "Willow HD",
+              "Willow HD 2", "Ten Sports", "A Sports HD", "Sky Sports Cricket",
+              "Sky Sports Main Event", "TNT 1", "TNT 2", "TNT 3",
+              "TNT 4", "Sky Sport Nz 1", "Sky Sport Nz 2", "Sky Sport Nz 3",
+              "Sky Sport Nz 4", "Sky Sport Nz 5", "Sky Sport 6 Nz", "Sky Sport Nz 7",
+              "Sky Sport Nz 8", "Sky Sport Nz 9", "Sky Cinema", "Sky Sports Action",
+              "Sky Sports Golf", "Sky Sports Premier League", "Sky Sports Football", "Sky Sports Plus",
+              "Sky Sports F1", "LaLiGA", "Premier Sports 1", "Premier Sports 2",
+              "Super Football", "Super Premier League", "Astro Cricket", "ESPN 1",
+              "ESPN 2", "Sky Sports Arena", "Sky Sports Mix", "Sky Sports Tennis",
+              "Fox Cricket 501 HD", "Sony Sports3"
           ]
 
           # دالة مساعدة للحصول على اسم القناة من سطر EXTINF
