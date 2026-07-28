@@ -37,7 +37,8 @@ jobs:
           raw_sources = [
               os.environ.get('CRICHD_SOURCE_1'),
               os.environ.get('CRICHD_SOURCE_2'),
-              os.environ.get('CRICHD_SOURCE_3')  # دعم للرمز القديم CRICHD إذا كان موجوداً
+              os.environ.get('CRICHD_SOURCE_3')
+              
           ]
           
           # تصفية الروابط الفارغة أو غير الموجودة
@@ -189,10 +190,10 @@ jobs:
           PYEOF
         env:
           CRICHD_PAGE_URL: ${{ secrets.CRICHD_PAGE }}
-          CRICHD_SOURCE_1: ${{ secrets.CRICHD1 }}
-          CRICHD_SOURCE_2: ${{ secrets.CRICHD2 }}
-          CRICHD_SOURCE_3: ${{ secrets.CRICHD3 }}
-          CRICHD_SOURCE_OLD: ${{ secrets.CRICHD }}
+          CRICHD_SOURCE_1: ${{ secrets.CRICHD_SOURCE_1 }}
+          CRICHD_SOURCE_2: ${{ secrets.CRICHD_SOURCE_2 }}
+          CRICHD_SOURCE_3: ${{ secrets.CRICHD_SOURCE_3 }}
+          
 
       - name: Deploy to Pizza Repository
         run: |
