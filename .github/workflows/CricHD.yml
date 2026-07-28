@@ -30,16 +30,29 @@ jobs:
           import re
           import os
 
-          # الحصول على روابط URL من الأسرار (Secrets)
+          # الحصول على رابط الصفحة وروابط المصادر المتعددة
           page_url = os.environ.get('CRICHD_PAGE_URL')
-          source_url = os.environ.get('CRICHD_SOURCE_URL')
+          
+          # جمع جميع روابط المصادر من المتغيرات البيئية
+          raw_sources = [
+              os.environ.get('CRICHD_SOURCE_1'),
+              os.environ.get('CRICHD_SOURCE_2'),
+              os.environ.get('CRICHD_SOURCE_3')  # دعم للرمز القديم CRICHD إذا كان موجوداً
+          ]
+          
+          # تصفية الروابط الفارغة أو غير الموجودة
+          source_urls = [url.strip() for url in raw_sources if url and url.strip()]
 
-          if not page_url or not source_url:
-              print("❌ Secret URLs not found!")
+          if not page_url:
+              print("❌ Secret CRICHD_PAGE_URL not found!")
+              exit(1)
+
+          if not source_urls:
+              print("❌ No valid Source URLs found in secrets!")
               exit(1)
 
           print(f"📥 Page playlist: {page_url}")
-          print(f"📥 Source playlist: {source_url}")
+          print(f"🔗 Total Source URLs configured: {len(source_urls)}")
 
           # تحميل صفحة CRICHD_PAGE
           try:
@@ -49,16 +62,6 @@ jobs:
               print(f"✅ Page playlist downloaded: {len(page_lines)} lines")
           except Exception as e:
               print(f"❌ Failed to download page playlist: {e}")
-              exit(1)
-
-          # تحميل مصدر CRICHD
-          try:
-              source_resp = requests.get(source_url, timeout=30)
-              source_resp.raise_for_status()
-              source_lines = source_resp.text.strip().split('\n')
-              print(f"✅ Source playlist downloaded: {len(source_lines)} lines")
-          except Exception as e:
-              print(f"❌ Failed to download source playlist: {e}")
               exit(1)
 
           # أسماء القنوات المستهدفة للمطابقة
@@ -93,35 +96,57 @@ jobs:
           # دالة مساعدة للحصول على اسم القناة من سطر EXTINF
           def get_channel_name(line):
               if line.startswith('#EXTINF:'):
-                  # الاسم بعد آخر فاصلة هو اسم القناة
                   parts = line.split(',')
                   if len(parts) > 1:
                       return parts[-1].strip()
               return None
 
-          # تحليل قائمة تشغيل المصدر وإنشاء كتل بناءً على القنوات
           source_blocks = {}
-          i = 0
-          while i < len(source_lines):
-              line = source_lines[i].strip()
-              if line.startswith('#EXTINF:'):
-                  ch_name = get_channel_name(line)
-                  if ch_name and ch_name in target_channels:
-                      block_lines = [line]
-                      i += 1
-                      # جمع خيارات EXTVLCOPT وروابط البث أسفل EXTINF
-                      while i < len(source_lines):
-                          next_line = source_lines[i].strip()
-                          if next_line.startswith('#EXTINF:'):
-                              break
-                          if next_line:  # تخطي السطور الفارغة
-                              block_lines.append(next_line)
-                          i += 1
-                      source_blocks[ch_name] = '\n'.join(block_lines)
-                      continue
-              i += 1
 
-          print(f"🔍 Found {len(source_blocks)} matching channels in source")
+          # التكرار عبر كل سورس متوفر بالتتابع (Multi-source Backup system)
+          for idx, src_url in enumerate(source_urls, 1):
+              print(f"\n🔄 Trying Source #{idx}: {src_url}")
+              try:
+                  source_resp = requests.get(src_url, timeout=30)
+                  source_resp.raise_for_status()
+                  source_lines = source_resp.text.strip().split('\n')
+                  
+                  if not source_lines or len(source_lines) < 2:
+                      print(f"⚠️ Source #{idx} returned empty playlist. Skipping...")
+                      continue
+
+                  print(f"✅ Source #{idx} downloaded successfully ({len(source_lines)} lines)")
+
+                  # استخراج القنوات من هذا المصدر
+                  i = 0
+                  added_count = 0
+                  while i < len(source_lines):
+                      line = source_lines[i].strip()
+                      if line.startswith('#EXTINF:'):
+                          ch_name = get_channel_name(line)
+                          if ch_name and ch_name in target_channels:
+                              # إضافة القناة فقط إذا لم يتم العثور عليها من مصادر سابقة
+                              if ch_name not in source_blocks:
+                                  block_lines = [line]
+                                  i += 1
+                                  while i < len(source_lines):
+                                      next_line = source_lines[i].strip()
+                                      if next_line.startswith('#EXTINF:'):
+                                          break
+                                      if next_line:
+                                          block_lines.append(next_line)
+                                      i += 1
+                                  source_blocks[ch_name] = '\n'.join(block_lines)
+                                  added_count += 1
+                                  continue
+                      i += 1
+                  print(f"➕ Found {added_count} new channel(s) from Source #{idx}")
+
+              except Exception as e:
+                  print(f"⚠️ Source #{idx} failed or broken link! Error: {e}")
+                  continue
+
+          print(f"\n🔍 Total unique matching channels gathered from all active sources: {len(source_blocks)}")
 
           # معالجة سطور EXTINF من قائمة تشغيل الصفحة لتوليد قائمة التشغيل النهائية
           final_lines = []
@@ -131,17 +156,14 @@ jobs:
               if line.startswith('#EXTINF:'):
                   ch_name = get_channel_name(line)
                   if ch_name and ch_name in source_blocks:
-                      # سطر EXTINF الخاص بالصفحة مع كتلة البث من المصدر
                       final_lines.append(line)
                       final_lines.append(source_blocks[ch_name].split('\n', 1)[1] if '\n' in source_blocks[ch_name] else '')
-                      # تخطي السطور التالية لـ EXTINF باستثناء السطور المستبدلة
                       i += 1
                       while i < len(page_lines):
                           next_line = page_lines[i].strip()
                           if next_line.startswith('#EXTINF:'):
                               break
                           i += 1
-                      # إضافة سطرين فارغين
                       final_lines.append('')
                       final_lines.append('')
                       continue
@@ -151,7 +173,6 @@ jobs:
                   final_lines.append(line)
               i += 1
 
-          # إضافة علامة EXTM3U في البداية إذا لم تكن موجودة
           if final_lines and not final_lines[0].startswith('#EXTM3U'):
               final_lines.insert(0, '#EXTM3U')
 
@@ -168,7 +189,10 @@ jobs:
           PYEOF
         env:
           CRICHD_PAGE_URL: ${{ secrets.CRICHD_PAGE }}
-          CRICHD_SOURCE_URL: ${{ secrets.CRICHD }}
+          CRICHD_SOURCE_1: ${{ secrets.CRICHD1 }}
+          CRICHD_SOURCE_2: ${{ secrets.CRICHD2 }}
+          CRICHD_SOURCE_3: ${{ secrets.CRICHD3 }}
+          CRICHD_SOURCE_OLD: ${{ secrets.CRICHD }}
 
       - name: Deploy to Pizza Repository
         run: |
