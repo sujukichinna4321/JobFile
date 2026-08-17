@@ -28,6 +28,7 @@ jobs:
           SOURCE_SONYLIV: ${{ secrets.SOURCE_SONYLIV }}
           # SOURCE_AX: ${{ secrets.SOURCE_AX }}
           SOURCE_FANCODEBD: ${{ secrets.SOURCE_FANCODEBD }}
+          SOURCE_CRICKET_ONLY: ${{ secrets.SOURCE_CRICKET_ONLY }}
           MAPPING_ALL_TV: ${{ secrets.MAPPING_ALL_TV }}
           MAPPING_ROARZONE: ${{ secrets.MAPPING_ROARZONE }}
           MAPPING_AYNA: ${{ secrets.MAPPING_AYNA }}
@@ -46,7 +47,8 @@ jobs:
               {"url": os.getenv("SOURCE_TAMPAD", "")},
               # {"url": os.getenv("SOURCE_BINGSTREAM", "")},
               # {"url": os.getenv("SOURCE_AX", "")},
-              {"url": os.getenv("SOURCE_FANCODEBD", "")}
+              {"url": os.getenv("SOURCE_FANCODEBD", "")},
+              {"url": os.getenv("SOURCE_CRICKET_ONLY", "")}
           ]
           # Filter out empty entries if any secret is not set
           SOURCE_PLAYLISTS = [sp for sp in SOURCE_PLAYLISTS if sp["url"]]
