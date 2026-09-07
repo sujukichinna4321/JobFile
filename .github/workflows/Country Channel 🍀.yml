@@ -41,7 +41,7 @@ jobs:
           # ==================== কনফিগারেশন ====================
           UPDATED_SOURCES = {
               "Arabic": ["https://raw.githubusercontent.com/bugsfreeweb/LiveTVCollector/main/LiveTV/Arabic/LiveTV.m3u"],
-              "Arab Emirates": ["https://raw.githubusercontent.com/iptv-org/iptv/refs/heads/master/streams/ae.m3u"],
+              "Emirates": ["https://raw.githubusercontent.com/iptv-org/iptv/refs/heads/master/streams/ae.m3u"],
               "Indonesia": ["https://raw.githubusercontent.com/bugsfreeweb/LiveTVCollector/main/LiveTV/Indonesia/LiveTV.m3u"],
               "France": ["https://raw.githubusercontent.com/bugsfreeweb/LiveTVCollector/main/LiveTV/France/LiveTV.m3u"],
               "India": ["https://raw.githubusercontent.com/bugsfreeweb/LiveTVCollector/main/LiveTV/India/LiveTV.m3u"],
