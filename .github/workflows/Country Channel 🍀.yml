@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Checkout target repository (buzzinguaecn/Pizza)
+      - name: 📥 Checkout target repository
         uses: actions/checkout@v4
         with:
           repository: buzzinguaecn/Pizza
@@ -39,18 +39,6 @@ jobs:
           from pathlib import Path
 
           # ==================== কনফিগারেশন ====================
-          SOURCES = {
-              "Arabic": "https://raw.githubusercontent.com/buzzinguaecn/Pizza/gh-pages/Arabic.m3u",
-              "France": "https://raw.githubusercontent.com/buzzinguaecn/Pizza/gh-pages/France.m3u",
-              "Indonesia": "https://raw.githubusercontent.com/buzzinguaecn/Pizza/gh-pages/Indonesia.m3u",
-              "India": "https://raw.githubusercontent.com/buzzinguaecn/Pizza/gh-pages/India.m3u",
-              "Afghanistan": "https://raw.githubusercontent.com/buzzinguaecn/Pizza/gh-pages/Afghanistan.m3u",
-              "Sports1": "https://raw.githubusercontent.com/buzzinguaecn/Pizza/gh-pages/Sports1.m3u",
-              "China": "https://raw.githubusercontent.com/buzzinguaecn/Pizza/gh-pages/China.m3u",
-              "BDIX": "https://raw.githubusercontent.com/buzzinguaecn/Pizza/gh-pages/BDIX.m3u"
-          }
-
-          # এখন UPDATED_SOURCES-এর মান হলো লিস্ট (একাধিক URL থাকতে পারে)
           UPDATED_SOURCES = {
               "Arabic": ["https://raw.githubusercontent.com/bugsfreeweb/LiveTVCollector/main/LiveTV/Arabic/LiveTV.m3u"],
               "Indonesia": ["https://raw.githubusercontent.com/bugsfreeweb/LiveTVCollector/main/LiveTV/Indonesia/LiveTV.m3u"],
@@ -58,7 +46,7 @@ jobs:
               "India": ["https://raw.githubusercontent.com/bugsfreeweb/LiveTVCollector/main/LiveTV/India/LiveTV.m3u"],
               "Afghanistan": ["https://iptv-org.github.io/iptv/countries/af.m3u"],
               "Sports1": ["https://iptv-org.github.io/iptv/categories/sports.m3u"],
-              "China": ["https://github.com/bugsfreeweb/LiveTVCollector/blob/main/LiveTV/China/LiveTV.m3u"],
+              "China": ["https://raw.githubusercontent.com/bugsfreeweb/LiveTVCollector/main/LiveTV/China/LiveTV.m3u"],
               "BDIX": [
                   "http://103.229.254.25:7001/playlist.m3u8",
                   "http://103.161.153.165:8000/playlist.m3u8",
@@ -71,292 +59,242 @@ jobs:
           }
           # ====================================================
 
-          # ---------- নাম পরিষ্কারের উন্নত ফাংশন ----------
-          def clean_channel_name(extinf_line):
-              """
-              #EXTINF লাইন থেকে চ্যানেলের নামের শেষের () এবং [] ব্লক পরিষ্কার করে:
-              - () ব্র্যাকেটের ভেতর শুধু পিক্সেল (যেমন (720p)) থাকলে বাদ দেয়।
-              - [] ব্র্যাকেটের ভেতর Geo‑সংক্রান্ত শব্দ (Geo‑Blocked, Geo Blocked, ইত্যাদি) থাকলে বাদ দেয়।
-              - কিন্তু () বা [] এর ভেতর HD, hd, Low, low, M, m ইত্যাদি থাকলে সেগুলো রাখে।
-              - এছাড়া group-title="...", Name ফরম্যাটে কমার পরে একটি স্পেস যোগ করে।
-              """
-              if ',' not in extinf_line:
-                  return extinf_line
-              prefix, name = extinf_line.split(',', 1)
-              
-              # সংরক্ষণযোগ্য () ও [] প্যাটার্ন (কেস ইনসেনসিটিভ)
-              keep_patterns = [
-                  r'\(\s*HD\s*\)', r'\[\s*HD\s*\]',
-                  r'\(\s*hd\s*\)', r'\[\s*hd\s*\]',
-                  r'\(\s*low\s*\)', r'\[\s*low\s*\]',
-                  r'\(\s*Low\s*\)', r'\[\s*Low\s*\]',
-                  r'\(\s*M\s*\)', r'\[\s*M\s*\]',
-                  r'\(\s*m\s*\)', r'\[\s*m\s*\]',
-              ]
-              keep_re = re.compile('|'.join(keep_patterns), re.IGNORECASE)
-              
-              # 1. প্রথমে সব () ব্লক খুঁজে বের করি
-              def process_parentheses(match):
-                  inner = match.group(1).strip()
-                  if re.fullmatch(r'\d+p', inner, re.IGNORECASE):
-                      return ''
-                  if keep_re.search(match.group(0)):
-                      return match.group(0)
-                  else:
-                      return ''
-              
-              name = re.sub(r'\(([^)]*)\)', process_parentheses, name)
-              
-              # 2. [] ব্লক পরিষ্কার
-              def process_brackets(match):
-                  inner = match.group(1).strip()
-                  if re.search(r'geo\s*-?\s*blocked?', inner, re.IGNORECASE):
-                      return ''
-                  if keep_re.search(match.group(0)):
-                      return match.group(0)
-                  else:
-                      return ''
-              
-              name = re.sub(r'\[([^\]]*)\]', process_brackets, name)
-              
-              # অতিরিক্ত স্পেস পরিষ্কার
-              name = re.sub(r'\s+', ' ', name).strip()
-              
-              # কমার পরে একটি স্পেস যোগ করে ফিরিয়ে দেওয়া
-              return f"{prefix}, {name}"
-          # -----------------------------------------
-
           def download_playlist(url):
+              """প্লেলিস্ট ডাউনলোড করে"""
               try:
-                  resp = requests.get(url, timeout=30)
+                  # GitHub র-ফাইলের জন্য সঠিক URL এ কনভার্ট
+                  if 'github.com' in url and '/blob/' in url:
+                      url = url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
+                  
+                  headers = {
+                      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                  }
+                  resp = requests.get(url, timeout=30, headers=headers)
                   resp.raise_for_status()
                   return resp.text
               except Exception as e:
                   print(f"ডাউনলোড ব্যর্থ {url}: {e}")
                   return None
 
-          def clean_updated_m3u(content):
+          def clean_channel_name(extinf_line):
               """
-              UPDATED_SOURCES থেকে আসা m3u কন্টেন্ট পরিষ্কার করে:
-              - #EXTVLCOPT লাইন বাদ দেয়
-              - #EXTINF লাইন থেকে http-user-agent="..." অ্যাট্রিবিউট সরিয়ে দেয়
-              - চ্যানেলের নাম থেকে অবাঞ্ছিত টেক্সট বাদ দেয় (clean_channel_name)
+              শুধুমাত্র (720p), (1080p), [Geo-Blocked], [Geo Blocked] রিমুভ করে
+              বাকি সব প্রপার্টি অক্ষুণ্ণ রাখে
+              """
+              if ',' not in extinf_line:
+                  return extinf_line
+              
+              # EXTINF অংশ এবং নাম অংশ আলাদা
+              parts = extinf_line.split(',', 1)
+              prefix = parts[0]
+              name = parts[1] if len(parts) > 1 else ''
+              
+              # শুধুমাত্র পিক্সেল এবং জিও ব্লক রিমুভ
+              name = re.sub(r'\s*\(\d+p\)\s*', ' ', name, flags=re.IGNORECASE)
+              name = re.sub(r'\s*\[\s*geo\s*[- ]?\s*blocked?\s*\]\s*', ' ', name, flags=re.IGNORECASE)
+              
+              # অতিরিক্ত স্পেস ক্লিন
+              name = re.sub(r'\s+', ' ', name).strip()
+              
+              return f"{prefix},{name}"
+
+          def remove_tvg_id(extinf_line):
+              """EXTINF লাইন থেকে tvg-id রিমুভ করে"""
+              # tvg-id="xxx" রিমুভ করি
+              extinf_line = re.sub(r'tvg-id="[^"]*"\s*', '', extinf_line)
+              # একাধিক স্পেস ক্লিন
+              extinf_line = re.sub(r'\s+', ' ', extinf_line).strip()
+              return extinf_line
+
+          def fix_license_type(content):
+              """
+              license_type=clearkey না থাকলে clearkey করে দেয়
               """
               lines = content.splitlines()
               new_lines = []
-              i = 0
-              while i < len(lines):
-                  line = lines[i].rstrip()
-                  if line.startswith('#EXTINF'):
-                      cleaned = re.sub(r'\s*http-user-agent="[^"]*"\s*', ' ', line)
-                      cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-                      cleaned = clean_channel_name(cleaned)
-                      new_lines.append(cleaned)
-                      i += 1
-                      while i < len(lines) and lines[i].startswith('#EXTVLCOPT'):
-                          i += 1
-                      if i < len(lines):
-                          url_line = lines[i].strip()
-                          new_lines.append(url_line)
-                          i += 1
-                  else:
-                      new_lines.append(line)
-                      i += 1
+              
+              for line in lines:
+                  if 'inputstream.adaptive.license_type=' in line:
+                      if 'clearkey' not in line.lower():
+                          # license_type এর মান clearkey সেট করি
+                          line = re.sub(r'inputstream\.adaptive\.license_type=[^,\s]+', 
+                                       'inputstream.adaptive.license_type=clearkey', line)
+                  new_lines.append(line)
+              
               return '\n'.join(new_lines)
 
-          def parse_m3u(content):
-              entries = []
+          def process_playlist(content, group_title):
+              """
+              প্লেলিস্ট প্রসেস করে গ্রুপ টাইটেল যোগ/পরিবর্তন করে
+              """
               if not content:
-                  return entries
+                  return None
+              
+              # license_type ফিক্স করি
+              content = fix_license_type(content)
+              
               lines = content.splitlines()
+              new_lines = []
               i = 0
+              
               while i < len(lines):
                   line = lines[i].strip()
+                  
+                  # EXTINF লাইন প্রসেস
                   if line.startswith('#EXTINF'):
-                      extinf = line
-                      url = ''
-                      if i+1 < len(lines):
-                          next_line = lines[i+1].strip()
-                          if not next_line.startswith('#EXTINF') and next_line:
-                              url = next_line
-                      entries.append((extinf, url))
-                      i += 2
-                  else:
+                      # tvg-id রিমুভ করি
+                      line = remove_tvg_id(line)
+                      
+                      # গ্রুপ টাইটেল চেক করি
+                      if 'group-title=' in line:
+                          # পুরনো গ্রুপ টাইটেল রিপ্লেস করি
+                          line = re.sub(r'group-title="[^"]*"', f'group-title="{group_title}"', line)
+                      else:
+                          # গ্রুপ টাইটেল যোগ করি
+                          if 'tvg-logo=' in line:
+                              line = re.sub(r'(tvg-logo="[^"]*")', f'\\1 group-title="{group_title}"', line)
+                          else:
+                              # tvg-logo না থাকলে EXTINF এর পরে যোগ করি
+                              if line.startswith('#EXTINF:-1'):
+                                  line = line.replace('#EXTINF:-1', f'#EXTINF:-1 group-title="{group_title}"', 1)
+                              else:
+                                  # অন্য ফরম্যাটের জন্য
+                                  line = re.sub(r'(#EXTINF[^,]*?)', f'\\1 group-title="{group_title}"', line, 1)
+                      
+                      # নাম ক্লিন করি (শুধুমাত্র পিক্সেল ও জিও ব্লক)
+                      line = clean_channel_name(line)
+                      new_lines.append(line)
                       i += 1
-              return entries
-
-          def extract_channel_name(extinf_line):
-              if ',' not in extinf_line:
-                  return None
-              return extinf_line.split(',')[-1].strip()
-
-          def build_playlist(country, source_entries, update_entries, first_run_flag):
-              """
-              source_entries: gh-pages থেকে পাওয়া এন্ট্রি (extinf, url)
-              update_entries: ২য় সোর্স থেকে পাওয়া এন্ট্রি (ইতিমধ্যে পরিষ্কার করা) - একাধিক URL মার্জ করে আনা
-              """
-              update_url_map = {}
-              for extinf, url in update_entries:
-                  name = extract_channel_name(extinf)
-                  if name and url:
-                      update_url_map[name] = url
-
-              # ===== ১. Gh-Pages সেকশন =====
-              gh_entries = []
-              for extinf, old_url in source_entries:
-                  cleaned_extinf = clean_channel_name(extinf)
-                  name = extract_channel_name(cleaned_extinf)
-                  matched_url = None
-                  if name:
-                      cleaned_name = re.sub(r'\s*\(\d+p\)\s*|\s*\[\s*geo\s*[- ]?\s*blocked?\s*\]\s*', '', name, flags=re.IGNORECASE).strip()
-                      for n, u in update_url_map.items():
-                          n_clean = re.sub(r'\s*\(\d+p\)\s*|\s*\[\s*geo\s*[- ]?\s*blocked?\s*\]\s*', '', n, flags=re.IGNORECASE).strip()
-                          if cleaned_name == n_clean:
-                              matched_url = u
+                      
+                      # KODIPROP, EXTVLCOPT, EXTHTTP সহ সব প্রপার্টি লাইন সংগ্রহ করি
+                      while i < len(lines):
+                          next_line = lines[i].strip()
+                          if next_line.startswith('#') and not next_line.startswith('#EXTINF'):
+                              new_lines.append(next_line)
+                              i += 1
+                          else:
                               break
-                  if matched_url:
-                      gh_entries.append((cleaned_extinf, matched_url))
+                      
+                      # URL লাইন যোগ করি (যদি থাকে)
+                      if i < len(lines):
+                          url_line = lines[i].strip()
+                          if url_line and not url_line.startswith('#'):
+                              new_lines.append(url_line)
+                              i += 1
+                      
+                      # প্রতিটি এন্ট্রির পর ২ লাইন গ্যাপ
+                      new_lines.append('')
+                      new_lines.append('')
+                      
                   else:
-                      gh_entries.append((cleaned_extinf, old_url))
+                      # #EXTM3U বা অন্য হেডার লাইন
+                      if line.startswith('#EXTM3U'):
+                          new_lines.append(line)
+                      elif line and not line.startswith('#'):
+                          # URL লাইন (যদি আগে প্রসেস না করা হয়)
+                          if i > 0 and not lines[i-1].strip().startswith('#EXTINF'):
+                              new_lines.append(line)
+                              new_lines.append('')
+                              new_lines.append('')
+                      i += 1
+              
+              return '\n'.join(new_lines)
 
-              # ===== ২. নতুন চ্যানেল =====
-              source_names = set()
-              for extinf, _ in source_entries:
-                  cleaned = clean_channel_name(extinf)
-                  name = extract_channel_name(cleaned)
-                  if name:
-                      cleaned_name = re.sub(r'\s*\(\d+p\)\s*|\s*\[\s*geo\s*[- ]?\s*blocked?\s*\]\s*', '', name, flags=re.IGNORECASE).strip()
-                      source_names.add(cleaned_name)
-              new_entries = []
-              for extinf, url in update_entries:
-                  name = extract_channel_name(extinf)
-                  if name:
-                      cleaned_name = re.sub(r'\s*\(\d+p\)\s*|\s*\[\s*geo\s*[- ]?\s*blocked?\s*\]\s*', '', name, flags=re.IGNORECASE).strip()
-                      if cleaned_name not in source_names:
-                          new_entries.append((clean_channel_name(extinf), url))
-
-              # ===== শুধুমাত্র URL আছে এমন এন্ট্রি গণনা =====
-              def count_valid(entries):
-                  return sum(1 for _, url in entries if url and url.strip())
-
-              total = count_valid(gh_entries) + count_valid(new_entries)
-
-              # ===== টাইমস্ট্যাম্প =====
+          def create_playlist(country, urls):
+              """
+              কান্ট্রির জন্য প্লেলিস্ট তৈরি করে
+              """
+              print(f"\n🔹 প্রসেসিং {country}...")
+              
+              all_entries = []
+              total_channels = 0
+              
+              for url in urls:
+                  print(f"    ↳ ডাউনলোড: {url}")
+                  content = download_playlist(url)
+                  if content:
+                      processed = process_playlist(content, country)
+                      if processed:
+                          # চ্যানেল কাউন্ট করি
+                          channel_count = len(re.findall(r'#EXTINF', processed))
+                          total_channels += channel_count
+                          all_entries.append(processed)
+                          print(f"    ✓ {channel_count} টি চ্যানেল প্রসেস করা হয়েছে")
+                  else:
+                      print(f"    ⚠️ {url} ব্যর্থ, এড়িয়ে যাচ্ছি।")
+              
+              if not all_entries:
+                  print(f"⚠️ {country} এর জন্য কোনো বৈধ সোর্স পাওয়া যায়নি")
+                  return None
+              
+              # সব এন্ট্রি মার্জ করি
+              merged_content = '\n'.join(all_entries)
+              
+              # টাইমস্ট্যাম্প তৈরি
               now = datetime.now().strftime("%I:%M:%S%p - %d-%m-%Y")
-
-              # ===== প্লেলিস্ট হেডার =====
+              
+              # প্লেলিস্ট হেডার
               final_lines = [
                   "#EXTM3U",
                   f"# Update Time: {now}",
-                  f"# Total Channel Found: {total} Channel",
-                  "# 👉 All links included in this file have been collected from publicly available sources. If any content owner wishes to have their source removed, please feel free to contact us. We deeply respect your work and opinions, and we will promptly honor your request without any objection.",
-                  "# 👉 Please note that neither I nor our team own any of the TV channels listed here. All channels belong to their respective owners. We only collect and share freely available sources so that everyone can enjoy them easily. These streaming links are widely accessible across many platforms on the internet. Our intention is solely for entertainment purposes.",
-                  "# 👉 If you find any of your content or source in our playlist and would like it to be removed, please feel free to contact us via inbox. We will take immediate action. 👈",
-                  "# 👉 Inbox Us: https://contact2.me/lpMKn8 👈",
+                  f"# Total Channels: {total_channels}",
+                  "# 👉 All links included in this file have been collected from publicly available sources.",
+                  "# 👉 If any content owner wishes to have their source removed, please contact us.",
+                  "# 👉 Inbox Us:  👈",
+                  "",
+                  f"# ============ {country} Channels ============",
                   ""
               ]
-
-              # ===== Gh-Pages সেকশন =====
-              if gh_entries:
-                  final_lines.append("#🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴")
-                  final_lines.append("# 🔴🔴🔴🔴 This Channels List Update From Gh-Pages 🔴🔴🔴🔴")
-                  final_lines.append("")
-                  final_lines.append("")
-                  final_lines.append("")
-                  for extinf, url in gh_entries:
-                      final_lines.append(extinf)
-                      final_lines.append(url if url else "")
-                      final_lines.append("")
-                  final_lines.append("# 🔴🔴🔴🔴 Gh-Pages Channel End Here 🔴🔴🔴🔴")
-                  final_lines.append("#🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴")
-                  final_lines.append("")
-                  final_lines.append("")
-                  final_lines.append("")
-
-              # ===== নতুন চ্যানেল সেকশন =====
-              if new_entries:
-                  final_lines.append("")
-                  final_lines.append("")
-                  final_lines.append("#🟡🟡🟡🟡 Gh-Pages Not Found Thats Channels, Now New Channel Added from 2nd Sourch 🟡🟡🟡🟡")
-                  for extinf, url in new_entries:
-                      final_lines.append(extinf)
-                      final_lines.append(url if url else "")
-                      final_lines.append("")
-
-              event_name = os.getenv("GITHUB_EVENT_NAME")
-              if first_run_flag:
-                  suffix = "🆕 Start 🆕"
-              elif event_name == "workflow_dispatch":
-                  suffix = "🆕 Start Done ✅"
-              else:
-                  suffix = "🔄 Schedule Done ✅"
-
-              return "\n".join(final_lines).rstrip() + "\n", total, suffix
+              
+              # কন্টেন্ট যোগ করি
+              final_lines.append(merged_content)
+              
+              return '\n'.join(final_lines)
 
           # ==================== মূল প্রোগ্রাম ====================
-          os.system('git config user.name "github-actions[bot]"')
-          os.system('git config user.email "github-actions[bot]@users.noreply.github.com"')
+          def main():
+              # গিট কনফিগার
+              os.system('git config user.name "github-actions[bot]"')
+              os.system('git config user.email "github-actions[bot]@users.noreply.github.com"')
+              
+              # প্রতিটি কান্ট্রি প্রসেস করি
+              for country, urls in UPDATED_SOURCES.items():
+                  print(f"\n{'='*60}")
+                  print(f"📁 প্রসেসিং {country}")
+                  print(f"{'='*60}")
+                  
+                  # প্লেলিস্ট তৈরি করি
+                  playlist_content = create_playlist(country, urls)
+                  
+                  if playlist_content:
+                      filename = f"{country}.m3u"
+                      
+                      # ফাইল সেভ করি
+                      with open(filename, "w", encoding="utf-8") as f:
+                          f.write(playlist_content)
+                      
+                      # গিট অপারেশন
+                      event_name = os.getenv("GITHUB_EVENT_NAME")
+                      if event_name == "workflow_dispatch":
+                          commit_msg = f"🆕 {country} : Manual Update ✅"
+                      else:
+                          commit_msg = f"🔄 {country} : Scheduled Update ✅"
+                      
+                      os.system(f'git add {filename}')
+                      status = os.popen('git status --porcelain').read()
+                      
+                      if filename in status:
+                          os.system(f'git commit -m "{commit_msg}"')
+                          print(f"✅ {country} কমিট করা হয়েছে: {commit_msg}")
+                      else:
+                          print(f"ℹ️ {country} তে কোনো পরিবর্তন নেই")
+              
+              # সব পুশ করি
+              os.system('git push origin main')
+              print("\n🎉 সব পরিবর্তন পুশ করা হয়েছে।")
 
-          for country in SOURCES:
-              print(f"\n🔹 প্রসেসিং {country}...")
-
-              src_url = SOURCES[country]
-              # UPDATED_SOURCES থেকে মান নাও (স্ট্রিং অথবা লিস্ট)
-              upd_raw = UPDATED_SOURCES.get(country)
-              if not upd_raw:
-                  print(f"⚠️ {country} এর জন্য ২য় সোর্স নেই, স্কিপ।")
-                  continue
-
-              # যদি স্ট্রিং হয়, তাহলে লিস্টে কনভার্ট করো
-              if isinstance(upd_raw, str):
-                  upd_urls = [upd_raw]
-              else:
-                  upd_urls = upd_raw  # ইতিমধ্যে লিস্ট
-
-              # gh-pages কন্টেন্ট ডাউনলোড
-              src_content = download_playlist(src_url)
-              if src_content is None:
-                  print(f"❌ {country} gh-pages সোর্স ডাউনলোড ব্যর্থ, স্কিপ।")
-                  continue
-
-              src_entries = parse_m3u(src_content)
-
-              # সব UPDATED_SOURCES URL থেকে এন্ট্রি জমা করো
-              all_update_entries = []
-              for upd_url in upd_urls:
-                  print(f"    ↳ ডাউনলোড: {upd_url}")
-                  upd_content = download_playlist(upd_url)
-                  if upd_content is None:
-                      print(f"    ⚠️ {upd_url} ব্যর্থ, এড়িয়ে যাচ্ছি।")
-                      continue
-                  cleaned = clean_updated_m3u(upd_content)
-                  entries = parse_m3u(cleaned)
-                  all_update_entries.extend(entries)
-                  print(f"    ✓ {len(entries)} টি এন্ট্রি পাওয়া গেছে।")
-
-              if not all_update_entries:
-                  print(f"⚠️ {country} এর জন্য কোনো বৈধ আপডেট সোর্স পাওয়া যায়নি, স্কিপ।")
-                  continue
-
-              file_exists = Path(f"{country}.m3u").exists()
-              new_content, total, suffix = build_playlist(
-                  country, src_entries, all_update_entries, first_run_flag=not file_exists
-              )
-
-              with open(f"{country}.m3u", "w", encoding="utf-8") as f:
-                  f.write(new_content)
-
-              commit_msg = f"🆗 {country} : {suffix}"
-              os.system(f'git add {country}.m3u')
-              status = os.popen('git status --porcelain').read()
-              if country+".m3u" in status:
-                  os.system(f'git commit -m "{commit_msg}"')
-                  print(f"✅ {country} কমিট করা হয়েছে: {commit_msg}")
-              else:
-                  print(f"ℹ️ {country} তে কোনো পরিবর্তন নেই, কমিট বাদ।")
-
-          os.system('git push origin main')
-          print("🎉 সব পরিবর্তন পুশ করা হয়েছে।")
+          if __name__ == "__main__":
+              main()
           EOF
 
       - name: 📝 Final push (if any pending)
