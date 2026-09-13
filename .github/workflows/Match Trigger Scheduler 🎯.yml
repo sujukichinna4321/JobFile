@@ -3,7 +3,7 @@ name: Match Trigger Scheduler 🎯
 on:
   schedule:
     # প্রতি ২ মিনিটে চেক করবে (GitHub কমপক্ষে ৫ মিনিট করে, তবে "* * * * *" দিলে বেশি রান হয়)
-    - cron: '*/2 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:
