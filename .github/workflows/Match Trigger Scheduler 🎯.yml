@@ -2,17 +2,14 @@ name: Match Trigger Scheduler 🎯
 
 on:
   schedule:
-    # প্রতি ২ মিনিটে চেক করবে (GitHub কমপক্ষে ৫ মিনিট করে, তবে "* * * * *" দিলে বেশি রান হয়)
-    - cron: '*/5 * * * *'
+    # প্রতি ৫ মিনিটে চেক করবে — এটাই GitHub-এর সবচেয়ে নির্ভরযোগ্য interval
+    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 jobs:
   check-and-trigger:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -23,16 +20,18 @@ jobs:
 
       - name: Check matches & trigger workflow
         env:
-          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}          # আপনার দিলে যেই PAT টোকেন আছে সেটাই কাজ করবে
-          REPO_OWNER: ${{ github.repository_owner }}   # যে অ্যাকাউন্টে YML আছে
-          REPO_NAME: ${{ github.event.repository.name }} # যে রিপোতে YML আছে
-          TARGET_WORKFLOW_FILE: "Live Event Sports 🆕.yml"  # আপনার টার্গেট workflow ফাইলের নাম (স্পেস সহ!)
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          TARGET_WORKFLOW_FILE: "Live Event Sports 🆕.yml"
           JSON_URL: "https://raw.githubusercontent.com/samnite2290/job/gh-pages/notifications.json"
           TRIGGER_MINUTES_BEFORE: "4"
+          WINDOW_MINUTES: "5"     # কত মিনিটের মধ্যে ম্যাচ থাকলে trigger দেবে
         run: |
           cat << 'EOF' > trigger_logic.py
           import os, re, json, requests
           from datetime import datetime, timedelta, timezone
+          from urllib.parse import quote
 
           PAT    = os.getenv("PAT_TOKEN")
           OWNER  = os.getenv("REPO_OWNER")
@@ -40,17 +39,17 @@ jobs:
           WFILE  = os.getenv("TARGET_WORKFLOW_FILE")
           URL    = os.getenv("JSON_URL")
           AHEAD  = int(os.getenv("TRIGGER_MINUTES_BEFORE", "4"))
+          WINDOW = int(os.getenv("WINDOW_MINUTES", "5"))
 
-          # ---- সময় helper ----
-          # JSON-এর সময় BST (UTC+6) ধরে নিচ্ছি (আপনার আগের YML-ও +6 ব্যবহার করছিল)
-          BD_TZ = timezone(timedelta(hours=6))
+          BD_TZ  = timezone(timedelta(hours=6))
           now_bd = datetime.now(BD_TZ).replace(second=0, microsecond=0)
 
           def parse_json_time(s):
-              # ফরম্যাট উদাহরণ: "14-09-2026-10:25 00 pm"  => 14-09-2026 10:25 PM
               if not s: return None
               s = s.strip()
-              m = re.match(r'^(\d{1,2})-(\d{1,2})-(\d{4})-(\d{1,2}):(\d{2})\s*(\d{2})?\s*(am|pm)?$', s.lower())
+              m = re.match(
+                  r'^(\d{1,2})-(\d{1,2})-(\d{4})-(\d{1,2}):(\d{2})\s*(\d{2})?\s*(am|pm)?$',
+                  s.lower())
               if not m: return None
               d, mo, y, hh, mm, _sec, ampm = m.groups()
               hh = int(hh); mm = int(mm)
@@ -62,19 +61,16 @@ jobs:
                   return None
 
           def extract_all_times(entry):
-              """একটি entry থেকে সব datetime বের করে"""
               times = []
-              # main Date & Time
               t1 = parse_json_time(entry.get("Date & Time", ""))
               if t1: times.append(t1)
-              # multipleTime: "(date-time).(date-time)" ফরম্যাটে
               mt = entry.get("multipleTime", "") or ""
               for part in re.findall(r'\(([^)]+)\)', mt):
                   t = parse_json_time(part)
                   if t: times.append(t)
               return times
 
-          # ---- JSON fetch ----
+          # JSON fetch
           try:
               r = requests.get(URL, timeout=20)
               r.raise_for_status()
@@ -83,32 +79,29 @@ jobs:
               print(f"❌ JSON fetch/parse error: {e}")
               raise SystemExit(0)
 
-          # ---- এখন থেকে ৪ মিনিট পরের টার্গেট মুহূর্ত ----
-          target = now_bd + timedelta(minutes=AHEAD)
-          # ± ১ মিনিটের tolerance দিচ্ছি কারণ cron দেরি হতে পারে
-          window_start = target - timedelta(minutes=1)
-          window_end   = target + timedelta(minutes=1)
+          # এখন থেকে (৪ + ৫) মিনিট সামনের সব ম্যাচ ধরব
+          window_start = now_bd + timedelta(minutes=AHEAD)
+          window_end   = now_bd + timedelta(minutes=AHEAD + WINDOW)
 
           matched = []
           for entry in data:
               for t in extract_all_times(entry):
                   if window_start <= t <= window_end:
-                      matched.append((entry.get("Title","?"), t.strftime("%d-%m-%Y %I:%M %p")))
+                      matched.append((entry.get("Title","?"),
+                                      t.strftime("%d-%m-%Y %I:%M %p")))
                       break
 
           print(f"🕒 Now (BD): {now_bd.strftime('%d-%m-%Y %I:%M %p')}")
-          print(f"🎯 Target window: {window_start.strftime('%I:%M %p')} – {window_end.strftime('%I:%M %p')}")
-          print(f"✅ Matched matches: {len(matched)}")
+          print(f"🎯 Window:  {window_start.strftime('%I:%M %p')} – {window_end.strftime('%I:%M %p')}")
+          print(f"✅ Matched: {len(matched)}")
           for title, t in matched:
               print(f"   • {title}  @ {t}")
 
           if not matched:
-              print("⏭️  No match to trigger. Exit.")
+              print("⏭️  No match. Exit.")
               raise SystemExit(0)
 
-          # ---- টার্গেট workflow trigger ----
-          # workflow ফাইলনাম URL-encode করতে হবে (স্পেস, ইমোজি)
-          from urllib.parse import quote
+          # Trigger
           encoded_file = quote(WFILE, safe='')
           api = f"https://api.github.com/repos/{OWNER}/{REPO}/actions/workflows/{encoded_file}/dispatches"
           headers = {
@@ -116,11 +109,10 @@ jobs:
               "Accept": "application/vnd.github+json",
               "X-GitHub-Api-Version": "2022-11-28",
           }
-          body = {"ref": "main"}   # আপনার টার্গেট repo-র ডিফল্ট ব্রাঞ্চ
-
-          resp = requests.post(api, headers=headers, json=body, timeout=20)
+          resp = requests.post(api, headers=headers,
+                               json={"ref": "main"}, timeout=20)
           if resp.status_code in (204, 201, 200):
-              print(f"🚀 Triggered {WFILE} successfully ({resp.status_code})")
+              print(f"🚀 Triggered {WFILE} ({resp.status_code})")
           else:
               print(f"❌ Trigger failed: {resp.status_code} {resp.text}")
           EOF
