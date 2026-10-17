@@ -30,6 +30,7 @@ jobs:
           SOURCE_WILLOW: ${{ secrets.SOURCE_WILLOW }}
            # SOURCE_FANCODEBD: ${{ secrets.SOURCE_FANCODEBD }}
           SOURCE_FANCODEBD_LIVE_EVENT_SPORTS: ${{ secrets.SOURCE_FANCODEBD_LIVE_EVENT_SPORTS }}
+          SOURCE_PRIME: ${{ secrets.SOURCE_PRIME }}
           # SOURCE_CRICKET_ONLY: ${{ secrets.SOURCE_CRICKET_ONLY }}
           MAPPING_ALL_TV: ${{ secrets.MAPPING_ALL_TV }}
           MAPPING_ROARZONE: ${{ secrets.MAPPING_ROARZONE }}
@@ -51,7 +52,8 @@ jobs:
               {"url": os.getenv("SOURCE_AX", "")},
               {"url": os.getenv("SOURCE_WILLOW", "")},
               # {"url": os.getenv("SOURCE_FANCODEBD", "")},
-              {"url": os.getenv("SOURCE_FANCODEBD_LIVE_EVENT_SPORTS", "")}
+              {"url": os.getenv("SOURCE_FANCODEBD_LIVE_EVENT_SPORTS", "")},
+              {"url": os.getenv("SOURCE_PRIME", "")},
             
           ]
           # Filter out empty entries if any secret is not set
