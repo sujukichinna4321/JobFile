@@ -1,0 +1,182 @@
+name: FANCODE PROXY
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  update-playlist:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Dependencies
+        run: |
+          pip install requests
+
+      - name: Run Update Script
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          SOURCE_FANCODEBD: ${{ secrets.SOURCE_FANCODEBD }}
+        run: |
+          cat << 'EOF' > update_fancode.py
+          import os
+          import re
+          import requests
+          from datetime import datetime, timedelta, timezone
+
+          # Proxy prefix that will be added to every streaming URL
+          PROXY_PREFIX = "https://cinexcricket.com/proxy/universal.php/?url="
+
+          # Source playlist (from secret)
+          SOURCE_FANCODEBD = os.getenv("SOURCE_FANCODEBD", "")
+
+          if not SOURCE_FANCODEBD:
+              print("ERROR: SOURCE_FANCODEBD secret is empty or not set!")
+              exit(1)
+
+          def parse_blocks(content):
+              """Split m3u content into blocks. Each block = [EXTINF line, url1, url2, ...]"""
+              blocks = []
+              lines = content.split('\n')
+              current_block = []
+              for line in lines:
+                  if line.strip().startswith('#EXTINF:'):
+                      if current_block:
+                          blocks.append(current_block)
+                      current_block = [line]
+                  elif current_block:
+                      current_block.append(line)
+              if current_block:
+                  blocks.append(current_block)
+              return blocks
+
+          def apply_proxy(url):
+              """
+              Add proxy prefix to a streaming URL while preserving any
+              pipe-separated options (|User-Agent=..., etc.)
+              Example:
+                https://x.com/a.m3u8|User-Agent=Foo
+                → https://proxy/?url=https://x.com/a.m3u8|User-Agent=Foo
+              """
+              url = url.strip()
+              if not url:
+                  return url
+              if url.startswith('#'):
+                  return url
+              if not (url.startswith('http://') or url.startswith('https://')):
+                  return url
+              # Skip if already proxied
+              if url.startswith(PROXY_PREFIX):
+                  return url
+              return PROXY_PREFIX + url
+
+          # ------------------------------------------------------------------
+          # 1. Download source playlist
+          # ------------------------------------------------------------------
+          print(f"Fetching source playlist...")
+          try:
+              r = requests.get(SOURCE_FANCODEBD, timeout=20)
+              r.raise_for_status()
+              source_content = r.text
+          except Exception as e:
+              print(f"Error loading source playlist: {e}")
+              exit(1)
+
+          # ------------------------------------------------------------------
+          # 2. Parse blocks and rebuild with proxy prefix on every URL line
+          # ------------------------------------------------------------------
+          header_lines = []
+          reached_first_block = False
+
+          for line in source_content.split('\n'):
+              if line.strip().startswith('#EXTINF:'):
+                  reached_first_block = True
+                  break
+              header_lines.append(line)
+
+          # Trim trailing blank lines from header
+          while header_lines and not header_lines[-1].strip():
+              header_lines.pop()
+
+          header_text = "\n".join(header_lines)
+
+          blocks = parse_blocks(source_content)
+          print(f"Parsed {len(blocks)} channel block(s) from source.")
+
+          processed_blocks = []
+          for block in blocks:
+              extinf_line = block[0]
+              new_lines = [extinf_line]
+
+              for line in block[1:]:
+                  stripped = line.strip()
+                  if not stripped:
+                      continue
+                  # Skip comment lines as-is
+                  if stripped.startswith('#'):
+                      new_lines.append(line)
+                      continue
+                  # Apply proxy to url (with or without |options)
+                  new_lines.append(apply_proxy(line))
+
+              processed_blocks.append("\n".join(new_lines))
+
+          # ------------------------------------------------------------------
+          # 3. Build final content
+          # ------------------------------------------------------------------
+          timestamp = (datetime.now(timezone.utc) + timedelta(hours=6)).strftime('%Y-%m-%d %H:%M:%S')
+
+          content_parts = []
+          content_parts.append(f"# 🆕 FANCODE PROXY - Updated: {timestamp} (BST) 🟡")
+          content_parts.append("\n\n\n".join(processed_blocks))
+
+          final_text = header_text + "\n" + "\n\n\n".join(content_parts) + "\n"
+
+          # ------------------------------------------------------------------
+          # 4. Clone destination repo, write file
+          # ------------------------------------------------------------------
+          pat_token = os.getenv("PAT_TOKEN")
+          if not pat_token:
+              print("ERROR: PAT_TOKEN secret is missing!")
+              exit(1)
+
+          os.system(f"git clone https://x-access-token:{pat_token}@github.com/buzzinguaecn/Pizza.git pizza-repo")
+
+          output_path = "pizza-repo/FancodeBD.m3u"
+          with open(output_path, "w", encoding="utf-8") as f:
+              f.write(final_text)
+
+          print(f"Wrote {output_path} with {len(processed_blocks)} block(s).")
+          EOF
+          python update_fancode.py
+
+      - name: Commit and Push Changes
+        run: |
+          cd pizza-repo
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes found. Commit skipped."
+          else
+            # Bangladesh time (UTC+6)
+            CURRENT_TIME=$(date -u -d "+6 hours" +"%Y-%m-%d %H:%M:%S")
+
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              COMMIT_MESSAGE="🆗 FANCODE PROXY : 🆕 Start Done ✅ - $CURRENT_TIME 🟡"
+            else
+              COMMIT_MESSAGE="🆗 FANCODE PROXY : 🔄 Updated Done ✅ - $CURRENT_TIME 🟡"
+            fi
+
+            git add FancodeBD.m3u
+            git commit -m "$COMMIT_MESSAGE"
+            git push origin main
+          fi
