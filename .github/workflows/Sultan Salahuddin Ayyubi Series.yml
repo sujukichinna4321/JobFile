@@ -5,7 +5,6 @@ on:
   schedule:
     - cron: '0 0 * * *' # প্রতিদিন একবার চালানোর জন্য (ঐচ্ছিক)
 
-# এই পারমিশনটি 403 এরর সমাধান করবে
 permissions:
   contents: write
 
@@ -35,15 +34,11 @@ jobs:
           import re
           import requests
 
-          # আপনার দেওয়া সোর্স প্লেলিস্টের লিংক
           SOURCE_URL = "https://raw.githubusercontent.com/srhady/join_telegram_chennal-livesportsplay/refs/heads/main/latest_movies.m3u"
           OUTPUT_FILE = "sultan_salahuddin_ayyubi.m3u"
-
-          # যে নাম দিয়ে চ্যানেল খুঁজতে হবে
           TARGET_NAME = "Sultan Salahuddin Ayyubi"
 
           def parse_m3u(content):
-              """M3U কন্টেন্টকে এন্ট্রির লিস্টে ভাগ করে"""
               lines = content.strip().split('\n')
               entries = []
               current_extinf = None
@@ -61,11 +56,6 @@ jobs:
               return entries
 
           def extract_season_episode(name):
-              """
-              চ্যানেলের নাম থেকে সিজন ও এপিসোড নম্বর বের করে।
-              উদাহরণ: 'Sultan Salahuddin Ayyubi S13E1288' -> (13, 1288)
-              """
-              # SxxExx বা Sxx Exx প্যাটার্ন খুঁজি
               match = re.search(r'S(\d+)\s*E(\d+)', name, re.IGNORECASE)
               if match:
                   return int(match.group(1)), int(match.group(2))
@@ -78,7 +68,6 @@ jobs:
                   response.raise_for_status()
               except Exception as e:
                   print(f"Error downloading: {e}")
-                  # খালি ফাইল তৈরি করা যাতে ওয়ার্কফ্লো ব্যর্থ না হয়
                   with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
                       f.write("#EXTM3U\n")
                   return
@@ -87,19 +76,25 @@ jobs:
               entries = parse_m3u(content)
               print(f"Total entries found: {len(entries)}")
 
-              # ফিল্টার এবং সিজন/এপিসোড বের করা
               filtered = []
+              seen_urls = set()  # ডুপ্লিকেট চেক করার জন্য সেট
+
               for entry in entries:
-                  # চ্যানেলের নাম বের করি (EXTINF লাইনের শেষ কমার পরের অংশ)
                   name_match = re.search(r',(.+)$', entry['extinf'])
                   if not name_match:
                       continue
                   channel_name = name_match.group(1).strip()
 
-                  # নামের মধ্যে আমাদের টার্গেট নাম আছে কিনা দেখি (case-insensitive)
                   if TARGET_NAME.lower() in channel_name.lower():
                       season, episode = extract_season_episode(channel_name)
                       if season is not None and episode is not None:
+                          # ইউআরএল আগে থেকে থাকলে স্কিপ করবে
+                          if entry['url'] in seen_urls:
+                              print(f"Skipping duplicate URL: {channel_name}")
+                              continue
+                          
+                          seen_urls.add(entry['url'])  # নতুন ইউআরএল সেটে যোগ করলাম
+                          
                           filtered.append({
                               'entry': entry,
                               'name': channel_name,
@@ -107,19 +102,16 @@ jobs:
                               'episode': episode
                           })
                       else:
-                          # সিজন/এপিসোড না থাকলে বাদ দিই (কারণ আপনি সিজন অনুযায়ী সাজাতে চান)
                           print(f"Skipping (no SxxExx): {channel_name}")
 
-              print(f"Matched entries with SxxExx: {len(filtered)}")
+              print(f"Matched unique entries with SxxExx: {len(filtered)}")
 
-              # সিজন এবং এপিসোড অনুযায়ী সাজানো (সংখ্যাগতভাবে)
+              # সিজন এবং এপিসোড অনুযায়ী সাজানো
               filtered.sort(key=lambda x: (x['season'], x['episode']))
 
-              # আউটপুট M3U ফাইল লিখি
               with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
                   f.write("#EXTM3U\n")
                   for item in filtered:
-                      # এন্ট্রির EXTINF লাইন এবং URL লিখি
                       f.write(item['entry']['extinf'] + "\n")
                       f.write(item['entry']['url'] + "\n")
 
@@ -135,12 +127,10 @@ jobs:
           git config --local user.name "GitHub Action"
           git add sultan_salahuddin_ayyubi.m3u
           
-          # যদি কোনো পরিবর্তন থাকে তবেই কমিট করি
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "Update Sultan Salahuddin Ayyubi playlist"
-            # পুশ করার আগে রিমোটের সাথে সিঙ্ক করি (যদি কোনো কনফ্লিক্ট থাকে এড়াতে)
+            git commit -m "Update Sultan Salahuddin Ayyubi playlist (No Duplicates)"
             git pull --rebase origin main
             git push
           fi
