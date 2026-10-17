@@ -5,6 +5,10 @@ on:
   schedule:
     - cron: '0 0 * * *' # প্রতিদিন একবার চালানোর জন্য (ঐচ্ছিক)
 
+# এই পারমিশনটি 403 এরর সমাধান করবে
+permissions:
+  contents: write
+
 jobs:
   build-playlist:
     runs-on: ubuntu-latest
@@ -12,6 +16,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -28,7 +34,6 @@ jobs:
           python << 'EOF'
           import re
           import requests
-          from urllib.parse import urlparse
 
           # আপনার দেওয়া সোর্স প্লেলিস্টের লিংক
           SOURCE_URL = "https://raw.githubusercontent.com/srhady/join_telegram_chennal-livesportsplay/refs/heads/main/latest_movies.m3u"
@@ -86,7 +91,6 @@ jobs:
               filtered = []
               for entry in entries:
                   # চ্যানেলের নাম বের করি (EXTINF লাইনের শেষ কমার পরের অংশ)
-                  # সাধারণত ফরম্যাট: #EXTINF:-1 ...,Channel Name
                   name_match = re.search(r',(.+)$', entry['extinf'])
                   if not name_match:
                       continue
@@ -130,10 +134,13 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add sultan_salahuddin_ayyubi.m3u
+          
           # যদি কোনো পরিবর্তন থাকে তবেই কমিট করি
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
             git commit -m "Update Sultan Salahuddin Ayyubi playlist"
+            # পুশ করার আগে রিমোটের সাথে সিঙ্ক করি (যদি কোনো কনফ্লিক্ট থাকে এড়াতে)
+            git pull --rebase origin main
             git push
           fi
