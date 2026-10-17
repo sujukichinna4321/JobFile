@@ -32,18 +32,35 @@ jobs:
           import requests
           from datetime import datetime, timedelta, timezone
 
-          # Proxy prefix that will be added to every streaming URL
+          # Proxy prefix added to every streaming URL
           PROXY_PREFIX = "https://cinexcricket.com/proxy/universal.php/?url="
 
-          # Source playlist (from secret)
           SOURCE_FANCODEBD = os.getenv("SOURCE_FANCODEBD", "")
-
           if not SOURCE_FANCODEBD:
               print("ERROR: SOURCE_FANCODEBD secret is empty or not set!")
               exit(1)
 
+          # --- Header-line filter patterns ---
+          # Any header line (starting with '#', before first #EXTINF) matching
+          # any of these patterns will be removed from the output.
+          HEADER_BLOCKLIST_PATTERNS = [
+              r'^#\s*Written and Directed by',
+              r'^#\s*Join us on Telegram',
+              r'^#\s*DATE\s*:?-',
+              r'^#\s*DATE\s*:',
+          ]
+          HEADER_BLOCKLIST_REGEX = [re.compile(p, re.IGNORECASE) for p in HEADER_BLOCKLIST_PATTERNS]
+
+          def is_blocked_header(line):
+              s = line.strip()
+              if not s:
+                  return False
+              for rx in HEADER_BLOCKLIST_REGEX:
+                  if rx.search(s):
+                      return True
+              return False
+
           def parse_blocks(content):
-              """Split m3u content into blocks. Each block = [EXTINF line, url1, url2, ...]"""
               blocks = []
               lines = content.split('\n')
               current_block = []
@@ -59,13 +76,6 @@ jobs:
               return blocks
 
           def apply_proxy(url):
-              """
-              Add proxy prefix to a streaming URL while preserving any
-              pipe-separated options (|User-Agent=..., etc.)
-              Example:
-                https://x.com/a.m3u8|User-Agent=Foo
-                → https://proxy/?url=https://x.com/a.m3u8|User-Agent=Foo
-              """
               url = url.strip()
               if not url:
                   return url
@@ -73,7 +83,6 @@ jobs:
                   return url
               if not (url.startswith('http://') or url.startswith('https://')):
                   return url
-              # Skip if already proxied
               if url.startswith(PROXY_PREFIX):
                   return url
               return PROXY_PREFIX + url
@@ -81,7 +90,7 @@ jobs:
           # ------------------------------------------------------------------
           # 1. Download source playlist
           # ------------------------------------------------------------------
-          print(f"Fetching source playlist...")
+          print("Fetching source playlist...")
           try:
               r = requests.get(SOURCE_FANCODEBD, timeout=20)
               r.raise_for_status()
@@ -91,23 +100,39 @@ jobs:
               exit(1)
 
           # ------------------------------------------------------------------
-          # 2. Parse blocks and rebuild with proxy prefix on every URL line
+          # 2. Build clean header (filter out blocklisted lines)
+          #    Keep #EXTM3U if present at top; drop the rest of the noise.
           # ------------------------------------------------------------------
-          header_lines = []
-          reached_first_block = False
-
+          raw_header_lines = []
           for line in source_content.split('\n'):
               if line.strip().startswith('#EXTINF:'):
-                  reached_first_block = True
                   break
-              header_lines.append(line)
+              raw_header_lines.append(line)
 
-          # Trim trailing blank lines from header
-          while header_lines and not header_lines[-1].strip():
-              header_lines.pop()
+          clean_header = []
+          for line in raw_header_lines:
+              stripped = line.strip()
+              if not stripped:
+                  continue
+              # Always keep the mandatory #EXTM3U line
+              if stripped.upper().startswith('#EXTM3U'):
+                  clean_header.append('#EXTM3U')
+                  continue
+              # Drop blocklisted lines
+              if is_blocked_header(line):
+                  continue
+              # Keep other comment lines as-is
+              clean_header.append(line)
 
-          header_text = "\n".join(header_lines)
+          # If nothing left (or no #EXTM3U present), default to just #EXTM3U
+          if not clean_header:
+              clean_header = ['#EXTM3U']
 
+          header_text = "\n".join(clean_header)
+
+          # ------------------------------------------------------------------
+          # 3. Parse blocks and apply proxy
+          # ------------------------------------------------------------------
           blocks = parse_blocks(source_content)
           print(f"Parsed {len(blocks)} channel block(s) from source.")
 
@@ -120,28 +145,26 @@ jobs:
                   stripped = line.strip()
                   if not stripped:
                       continue
-                  # Skip comment lines as-is
                   if stripped.startswith('#'):
                       new_lines.append(line)
                       continue
-                  # Apply proxy to url (with or without |options)
                   new_lines.append(apply_proxy(line))
 
               processed_blocks.append("\n".join(new_lines))
 
           # ------------------------------------------------------------------
-          # 3. Build final content
+          # 4. Build final content (timestamp WITHOUT "(BST)")
           # ------------------------------------------------------------------
           timestamp = (datetime.now(timezone.utc) + timedelta(hours=6)).strftime('%Y-%m-%d %H:%M:%S')
 
           content_parts = []
-          content_parts.append(f"# 🆕 FANCODE PROXY - Updated: {timestamp} (BST) 🟡")
+          content_parts.append(f"# 🆕 FANCODE PROXY - Updated: {timestamp} 🟡")
           content_parts.append("\n\n\n".join(processed_blocks))
 
           final_text = header_text + "\n" + "\n\n\n".join(content_parts) + "\n"
 
           # ------------------------------------------------------------------
-          # 4. Clone destination repo, write file
+          # 5. Clone destination repo and write file
           # ------------------------------------------------------------------
           pat_token = os.getenv("PAT_TOKEN")
           if not pat_token:
@@ -167,7 +190,6 @@ jobs:
           if git diff --quiet && git diff --staged --quiet; then
             echo "No changes found. Commit skipped."
           else
-            # Bangladesh time (UTC+6)
             CURRENT_TIME=$(date -u -d "+6 hours" +"%Y-%m-%d %H:%M:%S")
 
             if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
