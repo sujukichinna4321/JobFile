@@ -1,4 +1,4 @@
-name: Live Event Sports 🆕
+name: Live Event Sports 🆕🆕
 on:
   schedule:
     - cron: '*/5 * * * *' 
@@ -28,7 +28,8 @@ jobs:
           SOURCE_SONYLIV: ${{ secrets.SOURCE_SONYLIV }}
           SOURCE_AX: ${{ secrets.SOURCE_AX }}
           SOURCE_WILLOW: ${{ secrets.SOURCE_WILLOW }}
-          SOURCE_FANCODEBD: ${{ secrets.SOURCE_FANCODEBD }}
+           # SOURCE_FANCODEBD: ${{ secrets.SOURCE_FANCODEBD }}
+          SOURCE_FANCODEBD_LIVE_EVENT_SPORTS: ${{ secrets.SOURCE_FANCODEBD_LIVE_EVENT_SPORTS }}
           # SOURCE_CRICKET_ONLY: ${{ secrets.SOURCE_CRICKET_ONLY }}
           MAPPING_ALL_TV: ${{ secrets.MAPPING_ALL_TV }}
           MAPPING_ROARZONE: ${{ secrets.MAPPING_ROARZONE }}
@@ -49,7 +50,8 @@ jobs:
               {"url": os.getenv("SOURCE_BINGSTREAM", "")},
               {"url": os.getenv("SOURCE_AX", "")},
               {"url": os.getenv("SOURCE_WILLOW", "")},
-              {"url": os.getenv("SOURCE_FANCODEBD", "")}
+              # {"url": os.getenv("SOURCE_FANCODEBD", "")},
+              {"url": os.getenv("SOURCE_FANCODEBD_LIVE_EVENT_SPORTS", "")}
             
           ]
           # Filter out empty entries if any secret is not set
