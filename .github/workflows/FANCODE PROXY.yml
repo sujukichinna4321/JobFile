@@ -32,8 +32,8 @@ jobs:
           import requests
           from datetime import datetime, timedelta, timezone
 
-          # Proxy prefix added to every streaming URL
-          PROXY_PREFIX = "https://cinexcricket.com/proxy/universal.php/?url="
+          # Proxy prefix added to every streaming URL #https://cinexcricket.com/proxy/universal.php/?url=
+          PROXY_PREFIX = "https://cinearena.fun/proxy/universal.php/?url="
 
           SOURCE_FANCODEBD = os.getenv("SOURCE_FANCODEBD", "")
           if not SOURCE_FANCODEBD:
