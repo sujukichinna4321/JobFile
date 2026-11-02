@@ -35,6 +35,7 @@ jobs:
           MAPPING_ALL_TV: ${{ secrets.MAPPING_ALL_TV }}
           MAPPING_ROARZONE: ${{ secrets.MAPPING_ROARZONE }}
           MAPPING_AYNA: ${{ secrets.MAPPING_AYNA }}
+          SOURCE_LIVE_EVENT_KSA: ${{ secrets.SOURCE_LIVE_EVENT_KSA }}
           LOCAL_SOURCE_URL: ${{ secrets.LOCAL_SOURCE_URL }}
         run: |
           cat << 'EOF' > update_playlist.py
@@ -54,6 +55,7 @@ jobs:
               # {"url": os.getenv("SOURCE_FANCODEBD", "")},
               {"url": os.getenv("SOURCE_FANCODEBD_LIVE_EVENT_SPORTS", "")},
               {"url": os.getenv("SOURCE_PRIME", "")},
+              {"url": os.getenv("SOURCE_LIVE_EVENT_KSA", "")},
             
           ]
           # Filter out empty entries if any secret is not set
