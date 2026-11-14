@@ -28,13 +28,8 @@ jobs:
           SOURCE_SONYLIV: ${{ secrets.SOURCE_SONYLIV }}
           SOURCE_AX: ${{ secrets.SOURCE_AX }}
           SOURCE_WILLOW: ${{ secrets.SOURCE_WILLOW }}
-           # SOURCE_FANCODEBD: ${{ secrets.SOURCE_FANCODEBD }}
           SOURCE_FANCODEBD_LIVE_EVENT_SPORTS: ${{ secrets.SOURCE_FANCODEBD_LIVE_EVENT_SPORTS }}
           SOURCE_PRIME: ${{ secrets.SOURCE_PRIME }}
-          # SOURCE_CRICKET_ONLY: ${{ secrets.SOURCE_CRICKET_ONLY }}
-          MAPPING_ALL_TV: ${{ secrets.MAPPING_ALL_TV }}
-          MAPPING_ROARZONE: ${{ secrets.MAPPING_ROARZONE }}
-          MAPPING_AYNA: ${{ secrets.MAPPING_AYNA }}
           SOURCE_LIVE_EVENT_KSA: ${{ secrets.SOURCE_LIVE_EVENT_KSA }}
           LOCAL_SOURCE_URL: ${{ secrets.LOCAL_SOURCE_URL }}
         run: |
@@ -52,32 +47,16 @@ jobs:
               {"url": os.getenv("SOURCE_BINGSTREAM", "")},
               {"url": os.getenv("SOURCE_AX", "")},
               {"url": os.getenv("SOURCE_WILLOW", "")},
-              # {"url": os.getenv("SOURCE_FANCODEBD", "")},
               {"url": os.getenv("SOURCE_FANCODEBD_LIVE_EVENT_SPORTS", "")},
               {"url": os.getenv("SOURCE_PRIME", "")},
               {"url": os.getenv("SOURCE_LIVE_EVENT_KSA", "")},
-            
           ]
           # Filter out empty entries if any secret is not set
           SOURCE_PLAYLISTS = [sp for sp in SOURCE_PLAYLISTS if sp["url"]]
 
-          MAPPING_PLAYLISTS = [
-              os.getenv("MAPPING_ALL_TV", ""),
-              os.getenv("MAPPING_ROARZONE", ""),
-              os.getenv("MAPPING_AYNA", "")
-          ]
-          # Filter out empty entries
-          MAPPING_PLAYLISTS = [mp for mp in MAPPING_PLAYLISTS if mp]
-
           LOCAL_SOURCE_URL = os.getenv("LOCAL_SOURCE_URL", "")
 
-          CHANNEL_MAPPING = {
-              "T Sports": ["T Sports", "TSports", "T SPORTS", "T Sports HD"],
-              "TALK SPORT": ["TALK SPORT", "Talk Sports"],
-              "Willow Sports": ["Willow Sports", "Willow", "Willow HD"],
-              "PTV Sports": ["PTV Sports", "P TV Sports", "PTV Sports HD"],
-              "A Sports": ["A Sports", "A Sports HD"],
-          }
+          OTHERS_GROUP = "SAWARID سواريد - Others"
 
           def parse_blocks(content):
               blocks = []
@@ -125,6 +104,7 @@ jobs:
                   return "SAWARID سواريد - Sports"
               
               og_lower = og_clean.lower()
+              # Football/Cricket substring match (case-insensitive)
               if "football" in og_lower:
                   return "SAWARID سواريد - Football"
               elif "cricket" in og_lower:
@@ -141,53 +121,26 @@ jobs:
                   return (0, group_name)
               elif "cricket" in g_lower:
                   return (1, group_name)
+              elif g_lower == OTHERS_GROUP.lower():
+                  # Others সবসময় সবার শেষে
+                  return (3, group_name)
               else:
                   return (2, group_name)
+
+          def apply_group_to_extinf(extinf, new_group):
+              if 'group-title="' in extinf:
+                  return re.sub(r'group-title="[^"]*"', f'group-title="{new_group}"', extinf)
+              else:
+                  comma_idx = extinf.rfind(',')
+                  if comma_idx != -1:
+                      return extinf[:comma_idx] + f' group-title="{new_group}"' + extinf[comma_idx:]
+                  return extinf
 
           # Setup local and destination repository
           pat_token = os.getenv("PAT_TOKEN")
           os.system(f"git clone https://x-access-token:{pat_token}@github.com/buzzinguaecn/Pizza.git pizza-repo")
 
-          # 1. Parse Mapping Source Playlists
-          mapped_channels_data = {}
-          for url in MAPPING_PLAYLISTS:
-              try:
-                  r = requests.get(url, timeout=15)
-                  if r.status_code == 200:
-                      blocks = parse_blocks(r.text)
-                      for b in blocks:
-                          info = get_block_info(b)
-                          channel_name_mapped = info['name'].strip()
-                          active_urls = [u.strip() for u in info['urls'] if not u.strip().startswith('#')]
-                          if active_urls:
-                              if channel_name_mapped not in mapped_channels_data:
-                                  mapped_channels_data[channel_name_mapped] = []
-                              for u in active_urls:
-                                  if u not in mapped_channels_data[channel_name_mapped]:
-                                      mapped_channels_data[channel_name_mapped].append(u)
-              except Exception as e:
-                  print(f"Error loading mapping playlist {url}: {e}")
-
-          def get_mapped_urls_for_channel(local_name):
-              matched_key = None
-              for key in CHANNEL_MAPPING:
-                  if key.lower() == local_name.lower().strip():
-                      matched_key = key
-                      break
-              if not matched_key:
-                  return []
-              
-              keywords = CHANNEL_MAPPING[matched_key]
-              collected_urls = []
-              for mapped_name, urls in mapped_channels_data.items():
-                  for kw in keywords:
-                      if kw.lower() == mapped_name.lower().strip() or kw.lower() in mapped_name.lower():
-                          for u in urls:
-                              if u not in collected_urls:
-                                  collected_urls.append(u)
-              return collected_urls
-
-          # 2. Parse all Source Playlists channels and Group them
+          # 1. Parse all Source Playlists channels and Group them
           all_source_channels = []
           for sp in SOURCE_PLAYLISTS:
               try:
@@ -197,16 +150,7 @@ jobs:
                       for b in blocks:
                           info = get_block_info(b)
                           new_group = get_normalized_group(info['group'])
-                          
-                          # Update group-title in extinf line
-                          extinf = info['extinf']
-                          if 'group-title="' in extinf:
-                              extinf = re.sub(r'group-title="[^"]*"', f'group-title="{new_group}"', extinf)
-                          else:
-                              comma_idx = extinf.rfind(',')
-                              if comma_idx != -1:
-                                  extinf = extinf[:comma_idx] + f' group-title="{new_group}"' + extinf[comma_idx:]
-                          
+                          extinf = apply_group_to_extinf(info['extinf'], new_group)
                           updated_lines = [extinf] + b[1:]
                           all_source_channels.append({
                               'group': new_group,
@@ -219,9 +163,7 @@ jobs:
           for ch in all_source_channels:
               grouped_source_data[ch['group']].append(ch['lines'])
 
-          sorted_groups = sorted(grouped_source_data.keys(), key=group_sort_key)
-
-          # 3. Parse Local gh-pages playlist
+          # 2. Parse Local gh-pages playlist
           try:
               r = requests.get(LOCAL_SOURCE_URL, timeout=15)
               local_content = r.text
@@ -249,51 +191,44 @@ jobs:
               header_lines = header_lines[:49]
           header_text = "\n".join(header_lines)
 
-          # Parse and map local blocks
+          # Parse local blocks
           local_blocks = parse_blocks(local_content)
-          local_processed_blocks = []
-          timestamp = (datetime.now(timezone.utc) + timedelta(hours=6)).strftime('%Y-%m-%d %H:%M:%S')
+          
+          # ─────────────────────────────────────────────────────────────
+          # Local চ্যানেল তিনটি ভাগে ভাগ করছি:
+          #   ১) Football → SAWARID سواريد - Football গ্রুপে
+          #   ২) Cricket  → SAWARID سواريد - Cricket গ্রুপে
+          #   ৩) অন্যান্য  → SAWARID سواريد - Others গ্রুপে
+          # সবগুলোই group-title replace হবে এবং মূল A-Z সোর্টিং-এ যোগ হবে
+          # ─────────────────────────────────────────────────────────────
+          local_football_count = 0
+          local_cricket_count = 0
+          local_others_count = 0
 
           for b in local_blocks:
               info = get_block_info(b)
-              channel_name = info['name']
-              mapped_urls = get_mapped_urls_for_channel(channel_name)
+              original_group = info['group'].strip()
+              group_lower = original_group.lower()
               
-              existing_urls = info['urls']
-              existing_urls_clean = [u.lstrip('#').strip() for u in existing_urls]
-              
-              new_urls_to_prepend = []
-              has_skipped = False
-              
-              for m_url in mapped_urls:
-                  m_url_clean = m_url.strip()
-                  if m_url_clean in existing_urls_clean:
-                      has_skipped = True
-                  else:
-                      new_urls_to_prepend.append(m_url_clean)
-              
-              new_block_lines = [info['extinf']]
-              if has_skipped:
-                  skip_message = f"#AUTO-UPDATED - {channel_name} ⛔ SKIPPED ⛔ - {timestamp} 🟡 - 🔄 - 🔴"
-                  new_block_lines.append(skip_message)
-              elif len(new_urls_to_prepend) > 0:
-                  update_message = f"#AUTO-UPDATED - {channel_name} ✅- {timestamp} 🟡 - 🔄 - 🔴"
-                  new_block_lines.append(update_message)
-              
-              for u in new_urls_to_prepend:
-                  new_block_lines.append(u)
-              
-              for line in b[1:]:
-                  line_strip = line.strip()
-                  if not line_strip:
-                      continue
-                  new_block_lines.append(line)
-                  potential_url = line_strip.lstrip('#').strip()
-                  if potential_url.startswith('http://') or potential_url.startswith('https://'):
-                      if potential_url in [m.strip() for m in mapped_urls]:
-                          new_block_lines.append("# 🔴 Duplicate Link Found 🔴")
-              
-              local_processed_blocks.append("\n".join([l for l in new_block_lines if l.strip()]))
+              if "football" in group_lower:
+                  new_group = "SAWARID سواريد - Football"
+                  local_football_count += 1
+              elif "cricket" in group_lower:
+                  new_group = "SAWARID سواريد - Cricket"
+                  local_cricket_count += 1
+              else:
+                  # group-title নেই বা Football/Cricket নেই → Others
+                  new_group = OTHERS_GROUP
+                  local_others_count += 1
+
+              new_extinf = apply_group_to_extinf(info['extinf'], new_group)
+              updated_lines = [new_extinf] + b[1:]
+              grouped_source_data[new_group].append(updated_lines)
+
+          print(f"Local merged → Football: {local_football_count}, Cricket: {local_cricket_count}, Others: {local_others_count}")
+
+          # 3. Sort groups: Football → Cricket → A-Z others → Others (last)
+          sorted_groups = sorted(grouped_source_data.keys(), key=group_sort_key)
 
           # 4. Compile output content
           content_parts = []
@@ -313,9 +248,6 @@ jobs:
 
           if source_parts:
               content_parts.append("\n\n\n".join(source_parts))
-          
-          content_parts.append("# 🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡 Local Channel Updated  🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡")
-          content_parts.append("\n\n\n".join(local_processed_blocks))
 
           rest_of_content = "\n\n\n".join(content_parts)
           final_text = header_text + "\n" + rest_of_content
@@ -336,14 +268,11 @@ jobs:
           if git diff --quiet && git diff --staged --quiet; then
             echo "No changes found. Commit skipped."
           else
-            # Get current Bangladesh time (BST / UTC+6)
             CURRENT_TIME=$(date -u -d "+6 hours" +"%Y-%m-%d %H:%M:%S")
             
             if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-              # Manual Trigger Message
               COMMIT_MESSAGE="🆗 Live Event Sports : 🆕 Start Done ✅ - $CURRENT_TIME 🟡"
             else
-              # Scheduled Trigger Message
               COMMIT_MESSAGE="🆗 Live Event Sports : 🔄 Updated Done ✅ - $CURRENT_TIME 🟡"
             fi
             
