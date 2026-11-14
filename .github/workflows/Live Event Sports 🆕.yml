@@ -56,7 +56,8 @@ jobs:
 
           LOCAL_SOURCE_URL = os.getenv("LOCAL_SOURCE_URL", "")
 
-          OTHERS_GROUP = "SAWARID سواريد - Others"
+          FOOTBALL_GROUP = "SAWARID سواريد - Football"
+          CRICKET_GROUP  = "SAWARID سواريد - Cricket"
 
           def parse_blocks(content):
               blocks = []
@@ -104,11 +105,10 @@ jobs:
                   return "SAWARID سواريد - Sports"
               
               og_lower = og_clean.lower()
-              # Football/Cricket substring match (case-insensitive)
               if "football" in og_lower:
-                  return "SAWARID سواريد - Football"
+                  return FOOTBALL_GROUP
               elif "cricket" in og_lower:
-                  return "SAWARID سواريد - Cricket"
+                  return CRICKET_GROUP
               
               # অন্যান্য গ্রুপের জন্য প্রথম অক্ষর ক্যাপিটাল করে প্রিপেন্ড করা
               parts = og_clean.split()
@@ -121,9 +121,6 @@ jobs:
                   return (0, group_name)
               elif "cricket" in g_lower:
                   return (1, group_name)
-              elif g_lower == OTHERS_GROUP.lower():
-                  # Others সবসময় সবার শেষে
-                  return (3, group_name)
               else:
                   return (2, group_name)
 
@@ -140,30 +137,10 @@ jobs:
           pat_token = os.getenv("PAT_TOKEN")
           os.system(f"git clone https://x-access-token:{pat_token}@github.com/buzzinguaecn/Pizza.git pizza-repo")
 
-          # 1. Parse all Source Playlists channels and Group them
-          all_source_channels = []
-          for sp in SOURCE_PLAYLISTS:
-              try:
-                  r = requests.get(sp['url'], timeout=15)
-                  if r.status_code == 200:
-                      blocks = parse_blocks(r.text)
-                      for b in blocks:
-                          info = get_block_info(b)
-                          new_group = get_normalized_group(info['group'])
-                          extinf = apply_group_to_extinf(info['extinf'], new_group)
-                          updated_lines = [extinf] + b[1:]
-                          all_source_channels.append({
-                              'group': new_group,
-                              'lines': updated_lines
-                          })
-              except Exception as e:
-                  print(f"Error loading source playlist {sp['url']}: {e}")
-
-          grouped_source_data = defaultdict(list)
-          for ch in all_source_channels:
-              grouped_source_data[ch['group']].append(ch['lines'])
-
-          # 2. Parse Local gh-pages playlist
+          # ─────────────────────────────────────────────────────────────
+          # 1. Parse LOCAL playlist FIRST — so Football/Cricket groups can
+          #    be built with local entries on top followed by source entries.
+          # ─────────────────────────────────────────────────────────────
           try:
               r = requests.get(LOCAL_SOURCE_URL, timeout=15)
               local_content = r.text
@@ -191,46 +168,87 @@ jobs:
               header_lines = header_lines[:49]
           header_text = "\n".join(header_lines)
 
-          # Parse local blocks
           local_blocks = parse_blocks(local_content)
-          
-          # ─────────────────────────────────────────────────────────────
-          # Local চ্যানেল তিনটি ভাগে ভাগ করছি:
-          #   ১) Football → SAWARID سواريد - Football গ্রুপে
-          #   ২) Cricket  → SAWARID سواريد - Cricket গ্রুপে
-          #   ৩) অন্যান্য  → SAWARID سواريد - Others গ্রুপে
-          # সবগুলোই group-title replace হবে এবং মূল A-Z সোর্টিং-এ যোগ হবে
-          # ─────────────────────────────────────────────────────────────
-          local_football_count = 0
-          local_cricket_count = 0
-          local_others_count = 0
+
+          local_football_blocks = []   # local football → top of football group
+          local_cricket_blocks  = []   # local cricket  → top of cricket group
+          local_other_blocks    = defaultdict(list)   # local others → their own normalized group
 
           for b in local_blocks:
               info = get_block_info(b)
               original_group = info['group'].strip()
               group_lower = original_group.lower()
-              
+
               if "football" in group_lower:
-                  new_group = "SAWARID سواريد - Football"
-                  local_football_count += 1
+                  new_extinf = apply_group_to_extinf(info['extinf'], FOOTBALL_GROUP)
+                  local_football_blocks.append([new_extinf] + b[1:])
               elif "cricket" in group_lower:
-                  new_group = "SAWARID سواريد - Cricket"
-                  local_cricket_count += 1
+                  new_extinf = apply_group_to_extinf(info['extinf'], CRICKET_GROUP)
+                  local_cricket_blocks.append([new_extinf] + b[1:])
               else:
-                  # group-title নেই বা Football/Cricket নেই → Others
-                  new_group = OTHERS_GROUP
-                  local_others_count += 1
+                  # অন্যান্য গ্রুপ → SAWARID سواريد - {Group Name}
+                  new_group = get_normalized_group(original_group)
+                  new_extinf = apply_group_to_extinf(info['extinf'], new_group)
+                  local_other_blocks[new_group].append([new_extinf] + b[1:])
 
-              new_extinf = apply_group_to_extinf(info['extinf'], new_group)
-              updated_lines = [new_extinf] + b[1:]
-              grouped_source_data[new_group].append(updated_lines)
+          print(f"Local → Football: {len(local_football_blocks)}, "
+                f"Cricket: {len(local_cricket_blocks)}, "
+                f"Other groups: {len(local_other_blocks)}")
 
-          print(f"Local merged → Football: {local_football_count}, Cricket: {local_cricket_count}, Others: {local_others_count}")
+          # ─────────────────────────────────────────────────────────────
+          # 2. Parse all SOURCE playlists — collect source Football/Cricket
+          #    entries separately so they can be appended AFTER the local ones.
+          # ─────────────────────────────────────────────────────────────
+          source_football_blocks = []
+          source_cricket_blocks  = []
+          source_other_blocks    = defaultdict(list)   # source non-FB/CR groups (as before)
 
-          # 3. Sort groups: Football → Cricket → A-Z others → Others (last)
+          for sp in SOURCE_PLAYLISTS:
+              try:
+                  r = requests.get(sp['url'], timeout=15)
+                  if r.status_code == 200:
+                      blocks = parse_blocks(r.text)
+                      for b in blocks:
+                          info = get_block_info(b)
+                          new_group = get_normalized_group(info['group'])
+                          extinf = apply_group_to_extinf(info['extinf'], new_group)
+                          updated_lines = [extinf] + b[1:]
+
+                          if new_group == FOOTBALL_GROUP:
+                              source_football_blocks.append(updated_lines)
+                          elif new_group == CRICKET_GROUP:
+                              source_cricket_blocks.append(updated_lines)
+                          else:
+                              source_other_blocks[new_group].append(updated_lines)
+              except Exception as e:
+                  print(f"Error loading source playlist {sp['url']}: {e}")
+
+          # ─────────────────────────────────────────────────────────────
+          # 3. Build final grouped structure
+          #    Football group  → local football blocks FIRST, then source football
+          #    Cricket  group  → local cricket blocks  FIRST, then source cricket
+          #    Others          → local + source merged (local first per group)
+          # ─────────────────────────────────────────────────────────────
+          grouped_source_data = defaultdict(list)
+
+          if local_football_blocks or source_football_blocks:
+              grouped_source_data[FOOTBALL_GROUP] = local_football_blocks + source_football_blocks
+
+          if local_cricket_blocks or source_cricket_blocks:
+              grouped_source_data[CRICKET_GROUP] = local_cricket_blocks + source_cricket_blocks
+
+          # Local other groups first
+          for g_name, blocks in local_other_blocks.items():
+              grouped_source_data[g_name].extend(blocks)
+
+          # Then source other groups
+          for g_name, blocks in source_other_blocks.items():
+              grouped_source_data[g_name].extend(blocks)
+
+          # 4. Sort groups: Football → Cricket → A-Z others
           sorted_groups = sorted(grouped_source_data.keys(), key=group_sort_key)
 
-          # 4. Compile output content
+          # 5. Compile output content
           content_parts = []
           source_parts = []
           for g_name in sorted_groups:
