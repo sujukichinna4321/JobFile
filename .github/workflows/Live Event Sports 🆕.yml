@@ -110,7 +110,7 @@ jobs:
               elif "cricket" in og_lower:
                   return CRICKET_GROUP
               
-              # অন্যান্য গ্রুপের জন্য প্রথম অক্ষর ক্যাপিটাল করে প্রিপেন্ড করা
+              # أضف الحرف الأول للمجموعات الأخرى بحرف كبير
               parts = og_clean.split()
               capitalized_group = " ".join([p.capitalize() for p in parts])
               return f"SAWARID سواريد - {capitalized_group}"
@@ -186,7 +186,7 @@ jobs:
                   new_extinf = apply_group_to_extinf(info['extinf'], CRICKET_GROUP)
                   local_cricket_blocks.append([new_extinf] + b[1:])
               else:
-                  # অন্যান্য গ্রুপ → SAWARID سواريد - {Group Name}
+                  # Other Group → SAWARID سواريد - {Group Name}
                   new_group = get_normalized_group(original_group)
                   new_extinf = apply_group_to_extinf(info['extinf'], new_group)
                   local_other_blocks[new_group].append([new_extinf] + b[1:])
