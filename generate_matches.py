@@ -7,11 +7,12 @@ import pytz
 BD = pytz.timezone("Asia/Dhaka")
 NOW_BD = datetime.now(BD)
 TODAY_BD = NOW_BD.date()
-END_DATE = TODAY_BD + timedelta(days=2) # আগামী ৩ দিনের জন্য
+END_DATE = TODAY_BD + timedelta(days=2) # আগামী ৩ দিন
 
 DEFAULT_IMAGE = os.environ.get("DEFAULT_IMAGE", "https://raw.githubusercontent.com/samnite2290/img/gh-pages/HOME/HOME-LIVE-EVENT.png")
 SUBTITLE_SUFFIX = os.environ.get("SUBTITLE_SUFFIX", " | Select 🅻🅸🆅🅴 🆂🅿🅾🆁🆃🆂 Button, Share Our Apps With Your Friends & Family.")
 
+# ডিফল্ট চ্যানেল ম্যাপিং (যদি সোর্সে চ্যানেলের নাম না থাকে)
 FOOTBALL_LEAGUES = {
     "premier league":   ("🏆 ENGLISH ⚽ PREMIER LEAGUE 2026/27", "TNT 1"),
     "la liga":          ("🏆 SPANISH ⚽ LA LIGA 2026/27",       "SonyLiv"),
@@ -47,14 +48,10 @@ SOURCES = [
 
 def fetch_json(url):
     try:
-        print(f"Fetching: {url}", flush=True)
         r = requests.get(url, timeout=30)
         r.raise_for_status()
-        data = r.json()
-        print(f"Success from {url}", flush=True)
-        return data
+        return r.json()
     except Exception as e:
-        print(f"[ERROR] fetch failed {url}: {e}", flush=True)
         return []
 
 def _iter_events(data):
@@ -66,82 +63,44 @@ def _iter_events(data):
     return []
 
 def parse_start(ev):
-    # Tapmad এর জন্য
     if "EventStartDate" in ev:
-        try:
-            return datetime.strptime(ev["EventStartDate"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=BD)
+        try: return datetime.strptime(ev["EventStartDate"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=BD)
         except: pass
-        
-    # Fancode এর জন্য
     if "startTime" in ev:
-        try:
-            # Format: "04:45:00 PM 17-11-2026"
-            return datetime.strptime(ev["startTime"], "%I:%M:%S %p %d-%m-%Y").replace(tzinfo=BD)
+        try: return datetime.strptime(ev["startTime"], "%I:%M:%S %p %d-%m-%Y").replace(tzinfo=BD)
         except: pass
-
-    # অন্যান্য সোর্সের জন্য জেনেরিক চেষ্টা
-    keys = ("start_time", "startAt", "startDate", "beginAt", "matchTime", "date", "datetime", "utcStartTime", "start")
-    for k in keys:
-        v = ev.get(k)
-        if not v: continue
-        if isinstance(v, (int, float)):
-            try: return datetime.fromtimestamp(v, tz=timezone.utc).astimezone(BD)
-            except: pass
-        if isinstance(v, str):
-            s = v.strip().replace("Z", "+00:00")
-            try:
-                dt = datetime.fromisoformat(s)
-                if dt.tzinfo is None: dt = dt.replace(tzinfo=BD)
-                return dt
-            except: pass
     return None
 
 def extract_teams(ev):
-    # Fancode স্পেসিফিক
     if "team_1" in ev and "team_2" in ev:
         return str(ev["team_1"]).strip(), str(ev["team_2"]).strip()
-        
-    # Tapmad স্পেসিফিক
     if "VideoName" in ev and " vs " in ev["VideoName"]:
         parts = ev["VideoName"].split(" vs ")
         return parts[0].strip(), parts[1].strip()
-
-    # জেনেরিক
-    t1 = ev.get("team1") or ev.get("homeTeam") or ev.get("home") or ev.get("teamA") or ""
-    t2 = ev.get("team2") or ev.get("awayTeam") or ev.get("away") or ev.get("teamB") or ""
-    t1, t2 = str(t1).strip(), str(t2).strip()
-    if not t1 or not t2:
-        title = ev.get("title") or ev.get("name") or ev.get("eventName") or ""
-        parts = re.split(r"\s+(?:vs\.?|v\.?|🆚|-)\s+", title, maxsplit=1, flags=re.I)
-        if len(parts) == 2:
-            t1, t2 = parts[0].strip(), parts[1].strip()
-    return t1, t2
+    return "", ""
 
 def extract_competition(ev):
-    # Tapmad
     if "CategoryName" in ev: return ev["CategoryName"]
-    # Fancode
     if "event_name" in ev: return ev["event_name"]
-    
-    for k in ("competition", "league", "tournament", "series", "event", "category"):
-        v = ev.get(k)
-        if isinstance(v, dict):
-            v = v.get("name") or v.get("title")
-        if v: return str(v)
     return ""
 
-def extract_image(ev):
-    # Fancode
-    if "src" in ev and isinstance(ev["src"], str): return ev["src"]
-    # Tapmad
-    if "ThumbnailStandard" in ev and isinstance(ev["ThumbnailStandard"], str): return ev["ThumbnailStandard"]
-    
-    for k in ("image", "poster", "thumbnail", "banner", "imageUrl", "image_url", "logo"):
+# ---- নতুন ফাংশন: চ্যানেলের নাম খোঁজা ----
+def extract_channel(ev, default_channel):
+    # সোর্সে চ্যানেলের নাম আছে কিনা খোঁজা
+    keys = ("channel", "broadcaster", "platform", "channel_name", "broadcast", "network")
+    for k in keys:
         v = ev.get(k)
-        if isinstance(v, str) and v.startswith("http"): return v
-        if isinstance(v, dict):
-            u = v.get("url") or v.get("src")
-            if isinstance(u, str) and u.startswith("http"): return u
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        if isinstance(v, list) and len(v) > 0 and isinstance(v[0], str):
+            return v[0].strip()
+            
+    # যদি না পায়, ডিফল্ট ম্যাপিং থেকে নিবে
+    return default_channel
+
+def extract_image(ev):
+    if "src" in ev and isinstance(ev["src"], str): return ev["src"]
+    if "ThumbnailStandard" in ev and isinstance(ev["ThumbnailStandard"], str): return ev["ThumbnailStandard"]
     return ""
 
 def detect_sport(ev, comp):
@@ -179,29 +138,34 @@ def compute_multiple(sport, fmt, start_bd):
 
 def build_entry(ev, platform_tag):
     start = parse_start(ev)
-    if not start: 
-        return None
+    if not start: return None
     
-    # তারিখ ফিল্টার: আজ থেকে আগামী ৩ দিন
-    match_date = start.date()
-    if not (TODAY_BD <= match_date <= END_DATE): 
-        return None 
+    if not (TODAY_BD <= start.date() <= END_DATE): return None 
         
     t1, t2 = extract_teams(ev)
     if not t1 or not t2: return None
 
     comp = extract_competition(ev)
     sport = detect_sport(ev, comp)
-    sub_name, channel = league_meta(sport, comp)
+    sub_name, default_channel = league_meta(sport, comp)
+    
+    # সোর্সে চ্যানেলের নাম থাকলে সেটা নিবে, না থাকলে ডিফল্ট
+    channel = extract_channel(ev, default_channel)
+    
     fmt = guess_format(comp) if sport == "cricket" else ""
 
-    title    = f"{t1} 🆚 {t2} । Watch on {channel}"
+    title = f"{t1} 🆚 {t2} । Watch on {channel}"
     subtitle = f"{sub_name}{SUBTITLE_SUFFIX}"
-    image    = extract_image(ev) or DEFAULT_IMAGE
+    image = extract_image(ev) or DEFAULT_IMAGE
     date_time = bst_str(start - timedelta(minutes=5))
 
-    multiple_on = sport == "football" or fmt in ("T20", "T10", "ODI", "Test")
+    # ---- আপনার নির্দেশনা অনুযায়ী multipleTimeRun লজিক ----
+    is_premium = platform_tag in ["Fancode", "SonyLiv", "Tapmad"]
+    is_big_match = any(x in comp.lower() for x in ["world cup", "ipl", "bbl", "psl", "test", "odi", "champions league", "premier league", "nations league"])
+    
+    multiple_on = is_premium and is_big_match
     multiple_time = ""
+    
     if multiple_on:
         mt = compute_multiple(sport, fmt, start)
         if mt:
@@ -232,12 +196,11 @@ def main():
     for name, url, tag in SOURCES:
         data = fetch_json(url)
         events = _iter_events(data)
-        print(f"Processing {len(events)} events from {name}", flush=True)
         
         for ev in events:
             try:
                 entry = build_entry(ev, tag)
-            except Exception as e:
+            except Exception:
                 continue
             if not entry: continue
             key = (entry["Title"], entry["Date & Time"])
@@ -246,17 +209,6 @@ def main():
             results.append(entry)
 
     results.sort(key=_sort_key)
-
-    if not results:
-        print("[WARN] No matches found for the next 3 days. Creating dummy file.", flush=True)
-        results.append({
-            "Date & Time": bst_str(NOW_BD),
-            "multipleTimeRun": "Off",
-            "multipleTime": "",
-            "Title": "No Matches Found",
-            "Subtitle": "No scheduled matches found on live sources for the next 3 days.",
-            "Image": DEFAULT_IMAGE
-        })
 
     with open("notifications.json", "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
