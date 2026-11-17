@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  TZ: "Asia/Riyadh"   # ✅ Jeddah টাইমজোন
+  TZ: "Asia/Riyadh"   # ✅ توقيت جدة
 
 jobs:
   update-playlists:
@@ -18,8 +18,8 @@ jobs:
           DEST_REPO_URL: ${{ secrets.DEST_REPO_URL }}
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          # DEST_REPO_URL format: owner/repo  (e.g. buzzinguaecn/Pizza)
-          # অথবা full URL হলেও কাজ করবে
+          # صيغة DEST_REPO_URL: owner/repo (مثال:  )
+          # أو رابط كامل، وكلاهما يعمل
           REPO="${DEST_REPO_URL#https://github.com/}"
           REPO="${REPO%.git}"
           echo "::add-mask::$REPO"
@@ -27,7 +27,7 @@ jobs:
           cd repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # টার্গেট ব্রাঞ্চে চেকআউট
+          # الانتقال إلى الفرع المستهدف
           git checkout "${{ secrets.DEST_BRANCH }}"
 
       - name: 🐍 Setup Python
@@ -51,7 +51,7 @@ jobs:
           from datetime import datetime
           from pathlib import Path
 
-          # ==================== কনফিগারেশন ====================
+          # ==================== الإعدادات ====================
           UPDATED_SOURCES = {
               "Arabic": ["https://raw.githubusercontent.com/bugsfreeweb/LiveTVCollector/main/LiveTV/Arabic/LiveTV.m3u"],
               "Arab-Emirates": ["https://raw.githubusercontent.com/iptv-org/iptv/refs/heads/master/streams/ae.m3u"],
@@ -75,7 +75,7 @@ jobs:
           # ====================================================
 
           def download_playlist(url):
-              """প্লেলিস্ট ডাউনলোড করে"""
+              """تنزيل قائمة التشغيل"""
               try:
                   if 'github.com' in url and '/blob/' in url:
                       url = url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
@@ -87,13 +87,13 @@ jobs:
                   resp.raise_for_status()
                   return resp.text
               except Exception as e:
-                  print(f"ডাউনলোড ব্যর্থ {url}: {e}")
+                  print(f"فشل التنزيل {url}: {e}")
                   return None
 
           def clean_channel_name(extinf_line):
               """
-              শুধুমাত্র (720p), (1080p), [Geo-Blocked], [Geo Blocked] রিমুভ করে
-              বাকি সব প্রপার্টি অক্ষুণ্ণ রাখে
+              يزيل فقط (720p) و (1080p) و [Geo-Blocked] و [Geo Blocked]
+              ويحافظ على جميع الخصائص الأخرى
               """
               if ',' not in extinf_line:
                   return extinf_line
@@ -110,13 +110,13 @@ jobs:
               return f"{prefix},{name}"
 
           def remove_tvg_id(extinf_line):
-              """EXTINF লাইন থেকে tvg-id রিমুভ করে"""
+              """إزالة tvg-id من سطر EXTINF"""
               extinf_line = re.sub(r'tvg-id="[^"]*"\s*', '', extinf_line)
               extinf_line = re.sub(r'\s+', ' ', extinf_line).strip()
               return extinf_line
 
           def fix_license_type(content):
-              """license_type=clearkey না থাকলে clearkey করে দেয়"""
+              """إذا لم يكن license_type=clearkey يحوّله إلى clearkey"""
               lines = content.splitlines()
               new_lines = []
 
@@ -130,7 +130,7 @@ jobs:
               return '\n'.join(new_lines)
 
           def process_playlist(content, group_title):
-              """প্লেলিস্ট প্রসেস করে গ্রুপ টাইটেল যোগ/পরিবর্তন করে"""
+              """معالجة قائمة التشغيل وإضافة أو تغيير عنوان المجموعة"""
               if not content:
                   return None
 
@@ -191,14 +191,14 @@ jobs:
               return '\n'.join(new_lines)
 
           def create_playlist(country, urls):
-              """কান্ট্রির জন্য প্লেলিস্ট তৈরি করে"""
-              print(f"\n🔹 প্রসেসিং {country}...")
+              """إنشاء قائمة تشغيل لبلد معين"""
+              print(f"\n🔹 معالجة {country}...")
 
               all_entries = []
               total_channels = 0
 
               for url in urls:
-                  print(f"    ↳ ডাউনলোড: {url}")
+                  print(f"    ↳ تنزيل: {url}")
                   content = download_playlist(url)
                   if content:
                       processed = process_playlist(content, country)
@@ -206,12 +206,12 @@ jobs:
                           channel_count = len(re.findall(r'#EXTINF', processed))
                           total_channels += channel_count
                           all_entries.append(processed)
-                          print(f"    ✓ {channel_count} টি চ্যানেল প্রসেস করা হয়েছে")
+                          print(f"    ✓ تمت معالجة {channel_count} قناة")
                   else:
-                      print(f"    ⚠️ {url} ব্যর্থ, এড়িয়ে যাচ্ছি।")
+                      print(f"    ⚠️ فشل {url}، تم تخطيه.")
 
               if not all_entries:
-                  print(f"⚠️ {country} এর জন্য কোনো বৈধ সোর্স পাওয়া যায়নি")
+                  print(f"⚠️ لم يتم العثور على مصدر صالح لـ {country}")
                   return None
 
               merged_content = '\n'.join(all_entries)
@@ -234,14 +234,14 @@ jobs:
 
               return '\n'.join(final_lines)
 
-          # ==================== মূল প্রোগ্রাম ====================
+          # ==================== البرنامج الرئيسي ====================
           def main():
               os.system('git config user.name "github-actions[bot]"')
               os.system('git config user.email "github-actions[bot]@users.noreply.github.com"')
 
               for country, urls in UPDATED_SOURCES.items():
                   print(f"\n{'='*60}")
-                  print(f"📁 প্রসেসিং {country}")
+                  print(f"📁 معالجة {country}")
                   print(f"{'='*60}")
 
                   playlist_content = create_playlist(country, urls)
@@ -263,14 +263,14 @@ jobs:
 
                       if filename in status:
                           os.system(f'git commit -m "{commit_msg}"')
-                          print(f"✅ {country} কমিট করা হয়েছে: {commit_msg}")
+                          print(f"✅ تم تنفيذ commit لـ {country}: {commit_msg}")
                       else:
-                          print(f"ℹ️ {country} তে কোনো পরিবর্তন নেই")
+                          print(f"ℹ️ لا يوجد تغيير في {country}")
 
-              # ✅ secret থেকে ব্রাঞ্চ নাম
+              # ✅ اسم الفرع من السر
               branch = os.getenv("DEST_BRANCH", "main")
               os.system(f'git push origin {branch}')
-              print(f"\n🎉 সব পরিবর্তন পুশ করা হয়েছে ({branch})।")
+              print(f"\n🎉 تم دفع جميع التغييرات ({branch}).")
 
           if __name__ == "__main__":
               main()
