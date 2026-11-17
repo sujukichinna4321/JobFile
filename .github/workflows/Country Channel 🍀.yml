@@ -23,7 +23,8 @@ jobs:
           REPO="${DEST_REPO_URL#https://github.com/}"
           REPO="${REPO%.git}"
           echo "::add-mask::$REPO"
-          git clone --depth 0 "https://x-access-token:${PAT_TOKEN}@github.com/${REPO}.git" repo
+          # ✅ تم التصحيح: --depth 1 بدلاً من --depth 0
+          git clone --depth 1 "https://x-access-token:${PAT_TOKEN}@github.com/${REPO}.git" repo
           cd repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
