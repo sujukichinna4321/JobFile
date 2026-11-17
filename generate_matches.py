@@ -45,11 +45,14 @@ SOURCES = [
 
 def fetch_json(url):
     try:
+        print(f"Fetching: {url}", flush=True)
         r = requests.get(url, timeout=30)
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        print(f"Successfully fetched {len(data) if isinstance(data, list) else 'dict'} items from {url}", flush=True)
+        return data
     except Exception as e:
-        print(f"[WARN] fetch failed {url}: {e}", file=sys.stderr)
+        print(f"[ERROR] fetch failed {url}: {e}", flush=True)
         return []
 
 def _iter_events(data):
@@ -148,7 +151,8 @@ def compute_multiple(sport, fmt, start_bd):
 def build_entry(ev, platform_tag):
     start = parse_start(ev)
     if not start: return None
-    # আপনার রিকোয়ারমেন্ট অনুযায়ী আজকের ম্যাচ ফিল্টার (যদি ডাটাবেসে আজকের ম্যাচ না থাকে, রিকোয়ারমেন্টের জন্য ১৪, ১৫, ১৬ তারিখও নিতে পারেন)
+    
+    # আপনার রিকোয়ারমেন্ট অনুযায়ী আজকের ম্যাচ ফিল্টার
     if start.date() != TODAY_BD: 
         return None 
         
@@ -196,11 +200,13 @@ def main():
     results, seen = [], set()
     for name, url, tag in SOURCES:
         data = fetch_json(url)
-        for ev in _iter_events(data):
+        events = _iter_events(data)
+        print(f"Processing {len(events)} events from {name}", flush=True)
+        
+        for ev in events:
             try:
                 entry = build_entry(ev, tag)
             except Exception as e:
-                print(f"[WARN] {name}: {e}", file=sys.stderr)
                 continue
             if not entry: continue
             key = (entry["Title"], entry["Date & Time"])
@@ -208,19 +214,23 @@ def main():
             seen.add(key)
             results.append(entry)
 
-        results.sort(key=_sort_key)
+    results.sort(key=_sort_key)
 
-    # আজ কোনো ম্যাচ না পেলে একটি ডামি মেসেজ যুক্ত হবে, যাতে ফাইল তৈরি হয়
+    # আজ কোনো ম্যাচ না পেলে ডামি ডেটা দিয়ে ফাইল তৈরি হবে
     if not results:
+        print("[WARN] No matches found for today. Creating dummy file.", flush=True)
         results.append({
             "Date & Time": bst_str(NOW_BD),
             "multipleTimeRun": "Off",
             "multipleTime": "",
             "Title": "No Matches Found Today",
-            "Subtitle": "No scheduled matches were found on the live sources for today.",
+            "Subtitle": "Check back later or verify the source URLs.",
             "Image": DEFAULT_IMAGE
         })
 
     with open("notifications.json", "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
-    print(f"Generated {len(results)} entries for {TODAY_BD}")
+    print(f"Generated notifications.json with {len(results)} entries.", flush=True)
+
+if __name__ == "__main__":
+    main()
