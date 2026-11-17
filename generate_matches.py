@@ -208,11 +208,19 @@ def main():
             seen.add(key)
             results.append(entry)
 
-    results.sort(key=_sort_key)
+        results.sort(key=_sort_key)
+
+    # আজ কোনো ম্যাচ না পেলে একটি ডামি মেসেজ যুক্ত হবে, যাতে ফাইল তৈরি হয়
+    if not results:
+        results.append({
+            "Date & Time": bst_str(NOW_BD),
+            "multipleTimeRun": "Off",
+            "multipleTime": "",
+            "Title": "No Matches Found Today",
+            "Subtitle": "No scheduled matches were found on the live sources for today.",
+            "Image": DEFAULT_IMAGE
+        })
 
     with open("notifications.json", "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     print(f"Generated {len(results)} entries for {TODAY_BD}")
-
-if __name__ == "__main__":
-    main()
