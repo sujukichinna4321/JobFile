@@ -18,8 +18,8 @@ jobs:
           DEST_REPO_URL: ${{ secrets.DEST_REPO_URL }}
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          # DEST_REPO_URL format: owner/repo  (e.g.  )
-           
+          # DEST_REPO_URL format: owner/repo  (e.g. buzzinguaecn/Pizza)
+          # অথবা full URL হলেও কাজ করবে
           REPO="${DEST_REPO_URL#https://github.com/}"
           REPO="${REPO%.git}"
           echo "::add-mask::$REPO"
