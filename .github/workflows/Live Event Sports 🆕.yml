@@ -23,6 +23,11 @@ jobs:
       - name: Run Update Script
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          DEST_REPO_URL: ${{ secrets.DEST_REPO_URL }}
+          DEST_CLONE_DIR: ${{ secrets.DEST_CLONE_DIR }}
+          DEST_OUTPUT_FILE: ${{ secrets.DEST_OUTPUT_FILE }}
+          DEST_FOOTBALL_FILE: ${{ secrets.DEST_FOOTBALL_FILE }}
+          DEST_CRICKET_FILE: ${{ secrets.DEST_CRICKET_FILE }}
           SOURCE_TAMPAD: ${{ secrets.SOURCE_TAMPAD }}
           SOURCE_BINGSTREAM: ${{ secrets.SOURCE_BINGSTREAM }}
           SOURCE_SONYLIV: ${{ secrets.SOURCE_SONYLIV }}
@@ -51,13 +56,23 @@ jobs:
               {"url": os.getenv("SOURCE_PRIME", "")},
               {"url": os.getenv("SOURCE_LIVE_EVENT_KSA", "")},
           ]
-          # Filter out empty entries if any secret is not set
           SOURCE_PLAYLISTS = [sp for sp in SOURCE_PLAYLISTS if sp["url"]]
 
           LOCAL_SOURCE_URL = os.getenv("LOCAL_SOURCE_URL", "")
 
+          # Destination secrets
+          pat_token   = os.getenv("PAT_TOKEN")
+          dest_repo   = os.getenv("DEST_REPO_URL")
+          clone_dir   = os.getenv("DEST_CLONE_DIR")
+          out_file    = os.getenv("DEST_OUTPUT_FILE")
+          fb_file     = os.getenv("DEST_FOOTBALL_FILE")
+          ck_file     = os.getenv("DEST_CRICKET_FILE")
+
           FOOTBALL_GROUP = "SAWARID سواريد - Football"
           CRICKET_GROUP  = "SAWARID سواريد - Cricket"
+          NFL_GROUP      = "SAWARID سواريد - NFL"
+
+          SKIP_NAME_KEYWORDS = ["stream tv", "(use vpn)"]
 
           def parse_blocks(content):
               blocks = []
@@ -91,10 +106,25 @@ jobs:
                   line_strip = line.strip()
                   if not line_strip:
                       continue
-                  # ONLY consider uncommented URLs as valid active urls
                   if line_strip.startswith('http://') or line_strip.startswith('https://'):
                       urls.append(line_strip)
               return {'extinf': extinf_line, 'group': group, 'name': name, 'urls': urls}
+
+          def should_skip_name(name):
+              n_lower = name.lower()
+              for kw in SKIP_NAME_KEYWORDS:
+                  if kw in n_lower:
+                      return True
+              return False
+
+          def replace_vs_in_name(name):
+              return re.sub(r'(?<!\S)[vV][sS](?!\S)', '🆚', name)
+
+          def update_extinf_name(extinf, new_name):
+              comma_idx = extinf.rfind(',')
+              if comma_idx != -1:
+                  return extinf[:comma_idx+1] + ' ' + new_name
+              return extinf
 
           def get_normalized_group(original_group):
               og_clean = original_group.strip()
@@ -107,7 +137,6 @@ jobs:
               elif "cricket" in og_lower:
                   return CRICKET_GROUP
               
-              # أضف الحرف الأول للمجموعات الأخرى بحرف كبير
               parts = og_clean.split()
               capitalized_group = " ".join([p.capitalize() for p in parts])
               return f"SAWARID سواريد - {capitalized_group}"
@@ -130,9 +159,30 @@ jobs:
                       return extinf[:comma_idx] + f' group-title="{new_group}"' + extinf[comma_idx:]
                   return extinf
 
+          def process_block(block, is_source):
+              info = get_block_info(block)
+              
+              if not info['urls']:
+                  return None
+
+              if is_source and should_skip_name(info['name']):
+                  return None
+
+              new_group = get_normalized_group(info['group'])
+              
+              if re.search(r'\bnfl\b', info['name'], re.IGNORECASE):
+                  new_group = NFL_GROUP
+
+              extinf = apply_group_to_extinf(info['extinf'], new_group)
+
+              updated_name = replace_vs_in_name(info['name'])
+              if updated_name != info['name']:
+                  extinf = update_extinf_name(extinf, updated_name)
+
+              return {'group': new_group, 'lines': [extinf] + block[1:]}
+
           # Setup local and destination repository
-          pat_token = os.getenv("PAT_TOKEN")
-          os.system(f"git clone https://x-access-token:{pat_token}@github.com/buzzinguaecn/Pizza.git pizza-repo")
+          os.system(f"git clone https://x-access-token:{pat_token}@github.com/{dest_repo}.git {clone_dir}")
 
           # 1. Parse LOCAL playlist
           try:
@@ -142,7 +192,6 @@ jobs:
               print(f"Error loading local source playlist: {e}")
               exit(1)
 
-          # Parse header up to first #EXTINF
           header_lines = []
           for line in local_content.split('\n'):
               if line.strip().startswith('#EXTINF:'):
@@ -152,7 +201,6 @@ jobs:
           while header_lines and not header_lines[-1].strip():
               header_lines.pop()
 
-          # Force header length to be exactly 49 lines for starting insertion at line 50
           current_len = len(header_lines)
           if current_len < 49:
               padding_needed = 49 - current_len
@@ -163,118 +211,82 @@ jobs:
           header_text = "\n".join(header_lines)
 
           local_blocks = parse_blocks(local_content)
-
-          local_football_blocks = []
-          local_cricket_blocks  = []
-          local_other_blocks    = defaultdict(list)
+          grouped_data = defaultdict(list)
 
           for b in local_blocks:
-              info = get_block_info(b)
-              
-              # ─────────────────────────────────────────────────────────────
-              # CRITICAL FIX: Skip block if no active (uncommented) URLs found
-              # ─────────────────────────────────────────────────────────────
-              if not info['urls']:
-                  continue
-              
-              original_group = info['group'].strip()
-              group_lower = original_group.lower()
+              processed = process_block(b, is_source=False)
+              if processed:
+                  grouped_data[processed['group']].extend([processed['lines']])
 
-              if "football" in group_lower:
-                  new_extinf = apply_group_to_extinf(info['extinf'], FOOTBALL_GROUP)
-                  local_football_blocks.append([new_extinf] + b[1:])
-              elif "cricket" in group_lower:
-                  new_extinf = apply_group_to_extinf(info['extinf'], CRICKET_GROUP)
-                  local_cricket_blocks.append([new_extinf] + b[1:])
-              else:
-                  new_group = get_normalized_group(original_group)
-                  new_extinf = apply_group_to_extinf(info['extinf'], new_group)
-                  local_other_blocks[new_group].append([new_extinf] + b[1:])
-
-          print(f"Local → Football: {len(local_football_blocks)}, "
-                f"Cricket: {len(local_cricket_blocks)}, "
-                f"Other groups: {len(local_other_blocks)}")
+          print(f"Local blocks processed into {len(grouped_data)} groups")
 
           # 2. Parse all SOURCE playlists
-          source_football_blocks = []
-          source_cricket_blocks  = []
-          source_other_blocks    = defaultdict(list)
-
           for sp in SOURCE_PLAYLISTS:
               try:
                   r = requests.get(sp['url'], timeout=15)
                   if r.status_code == 200:
                       blocks = parse_blocks(r.text)
                       for b in blocks:
-                          info = get_block_info(b)
-                          
-                          # Skip source blocks if no active URLs
-                          if not info['urls']:
-                              continue
-                              
-                          new_group = get_normalized_group(info['group'])
-                          extinf = apply_group_to_extinf(info['extinf'], new_group)
-                          updated_lines = [extinf] + b[1:]
-
-                          if new_group == FOOTBALL_GROUP:
-                              source_football_blocks.append(updated_lines)
-                          elif new_group == CRICKET_GROUP:
-                              source_cricket_blocks.append(updated_lines)
-                          else:
-                              source_other_blocks[new_group].append(updated_lines)
+                          processed = process_block(b, is_source=True)
+                          if processed:
+                              grouped_data[processed['group']].extend([processed['lines']])
               except Exception as e:
                   print(f"Error loading source playlist {sp['url']}: {e}")
 
-          # 3. Build final grouped structure
-          grouped_source_data = defaultdict(list)
+          sorted_groups = sorted(grouped_data.keys(), key=group_sort_key)
 
-          if local_football_blocks or source_football_blocks:
-              grouped_source_data[FOOTBALL_GROUP] = local_football_blocks + source_football_blocks
-
-          if local_cricket_blocks or source_cricket_blocks:
-              grouped_source_data[CRICKET_GROUP] = local_cricket_blocks + source_cricket_blocks
-
-          for g_name, blocks in local_other_blocks.items():
-              grouped_source_data[g_name].extend(blocks)
-
-          for g_name, blocks in source_other_blocks.items():
-              grouped_source_data[g_name].extend(blocks)
-
-          # 4. Sort groups: Football → Cricket → A-Z others
-          sorted_groups = sorted(grouped_source_data.keys(), key=group_sort_key)
-
-          # 5. Compile output content
           content_parts = []
-          source_parts = []
           for g_name in sorted_groups:
               g_content = []
               g_content.append("# 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴")
               g_content.append(f"# 🟢🟢🟢🟢🟢🟢 {g_name} 🟢🟢🟢🟢🟢🟢")
               
               block_strings = []
-              for b in grouped_source_data[g_name]:
+              for b in grouped_data[g_name]:
                   block_strings.append("\n".join([line for line in b if line.strip()]))
               g_content.append("\n\n\n".join(block_strings))
               
               g_content.append(f"# 🆕 {g_name} 👉 Updateded Done ✅✅✅✅✅✅")
-              source_parts.append("\n\n\n".join(g_content))
-
-          if source_parts:
-              content_parts.append("\n\n\n".join(source_parts))
+              content_parts.append("\n\n\n".join(g_content))
 
           rest_of_content = "\n\n\n".join(content_parts)
           final_text = header_text + "\n" + rest_of_content
 
-          # Write results to output file
-          output_path = "pizza-repo/LiveEventSports.m3u"
+          # Write main output file using secret name
+          output_path = f"{clone_dir}/{out_file}"
           with open(output_path, "w", encoding="utf-8") as f:
               f.write(final_text)
+
+          # 5. Build Football-Live.m3u and Cricket-Live.m3u
+          def build_group_playlist(group_name, file_path):
+              parts = [header_text, ""]
+              if group_name in grouped_data:
+                  g_content = []
+                  g_content.append("# 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴")
+                  g_content.append(f"# 🟢🟢🟢🟢🟢🟢 {group_name} 🟢🟢🟢🟢🟢🟢")
+                  block_strings = []
+                  for b in grouped_data[group_name]:
+                      block_strings.append("\n".join([line for line in b if line.strip()]))
+                  g_content.append("\n\n\n".join(block_strings))
+                  g_content.append(f"# 🆕 {group_name} 👉 Updateded Done ✅✅✅✅✅✅")
+                  parts.append("\n\n\n".join(g_content))
+              with open(file_path, "w", encoding="utf-8") as f:
+                  f.write("\n".join(parts))
+
+          build_group_playlist(FOOTBALL_GROUP, f"{clone_dir}/{fb_file}")
+          build_group_playlist(CRICKET_GROUP,  f"{clone_dir}/{ck_file}")
           EOF
           python update_playlist.py
 
       - name: Commit and Push Changes
+        env:
+          DEST_CLONE_DIR: ${{ secrets.DEST_CLONE_DIR }}
+          DEST_OUTPUT_FILE: ${{ secrets.DEST_OUTPUT_FILE }}
+          DEST_FOOTBALL_FILE: ${{ secrets.DEST_FOOTBALL_FILE }}
+          DEST_CRICKET_FILE: ${{ secrets.DEST_CRICKET_FILE }}
+          DEST_BRANCH: ${{ secrets.DEST_BRANCH }}
         run: |
-          cd pizza-repo
+          cd "$DEST_CLONE_DIR"
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
@@ -289,7 +301,7 @@ jobs:
               COMMIT_MESSAGE="🆗 Live Event Sports : 🔄 Updated Done ✅ - $CURRENT_TIME 🟡"
             fi
             
-            git add LiveEventSports.m3u
+            git add "$DEST_OUTPUT_FILE" "$DEST_FOOTBALL_FILE" "$DEST_CRICKET_FILE"
             git commit -m "$COMMIT_MESSAGE"
-            git push origin main
+            git push origin "$DEST_BRANCH"
           fi
