@@ -1,9 +1,9 @@
-name: Update Match Notifications (BD Time)
+name: Update Match Notifications  
 
 on:
   schedule:
-    - cron: '5 18 * * *'   # BD 00:05
-    - cron: '5 6  * * *'   # BD 12:05
+     
+    - cron: '5 18,0,6,12 * * *'  
   workflow_dispatch:
 
 permissions:
