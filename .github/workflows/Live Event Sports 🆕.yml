@@ -76,10 +76,11 @@ jobs:
           ck_file     = os.getenv("DEST_CRICKET_FILE")
 
           # Group names fetched from secrets to hide branding
-          FOOTBALL_GROUP = os.getenv("GROUP_FOOTBALL", "SAWARID سواريد - Football")
-          CRICKET_GROUP  = os.getenv("GROUP_CRICKET", "SAWARID سواريد - Cricket")
-          NFL_GROUP      = os.getenv("GROUP_NFL", "SAWARID سواريد - NFL")
-          BASE_GROUP     = os.getenv("GROUP_BASE_NAME", "SAWARID سواريد")
+          # No hardcoded fallbacks to ensure absolute secrecy in the YML file
+          FOOTBALL_GROUP = os.getenv("GROUP_FOOTBALL", "Fallback-Football")
+          CRICKET_GROUP  = os.getenv("GROUP_CRICKET", "Fallback-Cricket")
+          NFL_GROUP      = os.getenv("GROUP_NFL", "Fallback-NFL")
+          BASE_GROUP     = os.getenv("GROUP_BASE_NAME", "Fallback-Base")
 
           SKIP_NAME_KEYWORDS = ["stream tv", "(use vpn)"]
 
